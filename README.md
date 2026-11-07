@@ -29,7 +29,7 @@
 
 新增 `--expanded-reader` 打开双页和漫画扩展示例，可追加 `--spread --rtl --vertical --arch --slice-wide --slice-long --long-scroll --preview --auto-start` 等参数。界面包含单双页、两轴、LTR/RTL、切片策略、双击／捏合缩放和边缘交接。工程内 `ReaderDemoUITests` 使用真实触摸测试这些组合。
 
-`--duo-reader` 打开 iPhone Duo 自适应示例，可追加 `--duo-source=5` 验证源页保位。它使用系统导航／工具栏、非对称安全区和 iOS 27.1 保留区域；宿主按可读空间在单双页间重建。接口、构建层级与姿态验证边界见 [iPhone Duo 适配](Docs/iPhoneDuo.md)。
+`--duo-reader` 打开 iPhone Duo 自适应示例，可追加 `--duo-source=5` 验证源页保位。菜单可隐藏系统控制栏，正文使用摄像头下方释放出的空间，右上角按钮恢复控制栏；显示与隐藏时均保持全屏纸张背景。它使用非对称安全区和 iOS 27.1 保留区域，宿主按可读空间在单双页间重建。接口、构建层级与姿态验证边界见 [iPhone Duo 适配](Docs/iPhoneDuo.md)。
 
 新增启动参数 `--async-styles` 可打开与测试共用的复杂样式异步宿主，追加 `--continuous` 查看连续模式。包括富文本、链接、行内附件、独立图片，以及加载中翻页、字号／主题重排和图片失败重试。新增 11 项真实 UIKit 渲染测试后，该阶段全量 93 项回归通过；新增用例在 ASan 下 11 项通过，配套正式测试为 `AsyncStyledRenderingTests`。延迟模拟任务完成顺序，不能代替原 App CoreText、真实网络与大图解码验收。
 
@@ -63,6 +63,14 @@ try paged.turn(.next)
 `beginInteractiveTurn/updateInteractiveTurn/endInteractiveTurn` 也可供宿主自定义驱动使用。快速重入返回 `interactionInProgress`。覆盖手势沿用旧实现的半屏归一化阈值：进度 0.17、方向速度 500 point/s，快速反向甩动优先取消。
 
 默认 next 向轴最小端拖动，水平 RTL 改为向右；显式纸张书脊优先决定几何方向。provider 的 previous/next 始终表示内容逻辑顺序，不继承系统界面语言。普通内层 UIScrollView 默认避让；SDK 缩放容器自动登记边缘交接，宿主可通过 `registerScrollableContent` 登记自己的滚动内容。
+
+## 正文、页眉页脚和背景
+
+`ReaderSurfaceViewController` 是可选的阅读页面外壳，支持“只动正文”“正文和页眉页脚移动”“整页连背景移动”三档。连续模式固定为只滚正文。宿主仍提供真实正文控制器和业务装饰视图，背景可以使用图片并始终覆盖外壳全幅。
+
+`layout` 和 `onLayoutChange` 输出同一坐标系中的 `bodyFrame/headerFrame/footerFrame/backgroundFrame/rendererFrame`，可直接取得 origin、size 或用 bodyFrame.size 排版；关闭的页眉页脚槽位为 nil。`layout(in:)` 转换为宿主坐标，`currentPageFrames(in:)` 查询平移／覆盖时的当前页平面位置；纸张曲面过渡期间返回 nil，不把隐藏原页矩形冒充实际曲面。改变装饰高度时统一重算正文，并使旧排版回填失效。
+
+启动 `--surface-reader` 查看带纹理背景的组合示例和实时矩形数值；支持 `--surface-chrome`、`--surface-whole`、`--continuous`、`--vertical`。接口、坐标含义和本轮单页支持范围见 [页面外壳接入](Docs/ReaderSurface.md)。
 
 ## 动态视口与 iPhone Duo
 
@@ -184,7 +192,7 @@ submit 不等于 installed：拖动／减速结束、全部暂停原因解除后
 
 ## 验证
 
-最新结果：完整 SDK Simulator 330 项、Duo 相关 ASan 53 项、纯逻辑 97 项通过；iPhone Duo / iOS 27.1 上另有 3 项原生 UI 测试通过，零失败、零跳过。完整测试启用严格并发与 Swift 警告视为错误检查，Release 多架构示例构建通过。此前的 5 项扩展阅读原生手势测试保留在对应阶段记录。最新证据及未实测姿态见 [Duo 验收记录](Docs/iPhoneDuo.md)。
+最新结果：完整 SDK Simulator 370 项、页面外壳 ASan 37 项、纯逻辑 118 项通过；页面外壳独立示例另有 2 项原生 UI 测试，覆盖三档分页、连续固定装饰与坐标输出。完整测试启用严格并发与 Swift 警告视为错误检查，Release 多架构示例构建通过。最新证据及范围见 [页面外壳验收](Docs/ReaderSurface.md)，Duo 与其他历史场景保留各自阶段记录。
 
 纯逻辑测试（macOS 不编译 UIKit 后端）：
 
@@ -207,7 +215,7 @@ xcodebuild -project Examples/ReaderDemo.xcodeproj -scheme ReaderDemo \
   -destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
 ```
 
-最新验证记录见 [iPhone Duo 适配](Docs/iPhoneDuo.md)。其他接口与阶段记录包括 [双页、漫画与缩放](Docs/SpreadComicAndZoom.md)、[纸张与回填](Docs/PaperAndPageReplacement.md)、[页码与加载](Docs/ReadingStatusAndLoading.md)、[内容接缝／补屏](Docs/ContinuousContentContract.md) 和 [平移与分页自动阅读](Docs/SlideAndPagedAutomaticReading.md)。模拟器测试不等于真机帧率、大图峰值、长期运行或完整折叠姿态验收。
+最新验证记录见 [页面外壳接入](Docs/ReaderSurface.md)。其他接口与阶段记录包括 [iPhone Duo 适配](Docs/iPhoneDuo.md)、[双页、漫画与缩放](Docs/SpreadComicAndZoom.md)、[纸张与回填](Docs/PaperAndPageReplacement.md)、[页码与加载](Docs/ReadingStatusAndLoading.md)、[内容接缝／补屏](Docs/ContinuousContentContract.md) 和 [平移与分页自动阅读](Docs/SlideAndPagedAutomaticReading.md)。模拟器测试不等于真机帧率、大图峰值、长期运行或完整折叠姿态验收。
 
 ParsingBook 阅读展示层仍需真实宿主适配与兼容验收。SDK 已补目标单页效果、自动阅读、当前页回填和通用退出协同，但尚未接入当前 App；历史宿主替换评估作为本地资料保留。
 

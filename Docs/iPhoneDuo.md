@@ -88,9 +88,33 @@ let spread = try PageSpreadViewController(
 
 运行 `ReaderDemo`，添加 `--duo-reader`，可用 `--duo-source=5` 从第 5 源页开始。该页面采用系统导航／工具栏，提供前后翻页、自动阅读、自动单双页／始终单页、RTL 和半翻预览／取消。源码为 `Examples/ReaderDemo/DuoReaderDemoViewController.swift`。
 
+### 隐藏右侧控制栏与全屏背景
+
+示例菜单提供“隐藏控制栏”，同时隐藏导航栏、工具栏及状态栏；右上角保留“显示控制栏”按钮，可恢复原控制区。恢复按钮按 SDK 返回的可读区域定位，不落在摄像头或折痕上。
+
+隐藏使用 `UINavigationController.setNavigationBarHidden`、`setToolbarHidden` 与页面的 `prefersStatusBarHidden`，导航容器通过 `childForStatusBarHidden` 转发偏好。没有切换 `preferredVerticalBarBehavior`：该属性的 disabled 会把侧栏内容改到横向，并非临时收起控制区的接口。
+
+系统栏隐藏后，Duo 仍可能报告整列水平 safeAreaInsets。例如本次外屏采集为右侧 84 point，但实际摄像头保留区域仅位于顶部。为使用其下方的空间，`ReaderAdaptiveLayoutPolicy` 新增 `horizontalSafeArea: .reservedRegions`：以具体遮挡替代整列左右缩进，保留上下安全距离，并继续避让全部活动 occlusion/division；默认 `.system` 完全保留原来的四边安全区。示例仅在全部控制栏隐藏、且编译器和 iOS 运行时支持原生保留区域时启用，恢复控制栏立即切回 `.system`。宿主按源页锚点重建正文，不用负安全区或固定减去 84 point 冒充全屏。
+
+`.reservedRegions` 要求调用方提供完整、最新的原生区域，并确认没有仍可见的侧栏或其他控件依赖左右安全区。旧系统／旧 SDK 不具备区域查询时继续使用 `.system`。它按最大无障碍矩形布局，保证正文不穿过摄像头或折痕，不保证所有姿态均能占满整个显示宽度。背景始终可以全幅显示。
+
+背景不随 `contentFrame` 裁切：示例的导航容器、页面根视图、PageTurnViewController 根视图、分页视图和双页书脊共用同一个动态纸张底色，系统栏使用透明 appearance。正文位于安全可读区域，背景始终铺满窗口，隐藏和恢复控制栏都不会留下白色边条。深色模式沿用同一套动态颜色。系统相机孔／屏幕圆角属于硬件遮挡，不属于待填充的阅读背景。
+
+控制栏显隐是宿主 UI 行为，无需修改 SDK 翻页配置；示例实现位于 `DuoReaderDemoViewController.swift` 的 `setControlsHidden` 与 `DuoReaderNavigationController`。切换前临时暂停并取消在途翻页，完成后归还该暂停原因，保留用户的自动阅读意图。
+
 建议在 Device Hub 中分别观察外屏、展开、书本半折、tabletop，以及不同宽度的窗口。不要把普通窗口改宽、旋转或 fixture 注入称为实际折叠姿态。
 
 ## 验证记录
+
+### 控制栏显隐与全屏背景增量验收
+
+本次增量已通过 iPhone Duo / iOS 27.1 的 **5 项原生 UI 测试**及 **22 项布局逻辑测试**，均零失败。原生测试确认：隐藏后正文宽度比显示时增加超过 20 point，恢复后回到原宽度且仍在第 5 源页；半翻期间隐藏会取消旧事务，恢复后可继续翻到第 6 页；显示、隐藏、恢复三个状态的窗口四边背景像素与纸张背景一致，恢复按钮始终可点击且位于可读区域。构建同时启用 complete 严格并发和 Swift 警告视为错误检查。
+
+最初仅隐藏 UIKit 系统栏时，正文宽度仍为 382 point。运行记录确认右侧 safeAreaInsets 保留 84 point，而活动遮挡缩小到顶部 84×82 point；新增可选 horizontalSafeArea 策略后原生扩展测试通过。对应几何用例使用真实采集值，得到摄像头下方 466×562 point 的可读矩形。另一个宽窗口断言最初错误地要求下方矩形；按实际最大无障碍面积修正为摄像头右侧后，22 项逻辑回归通过，未修改布局算法来迎合错误预期。
+
+有效日志为 session scratch 中的 `page-turn-duo-immersive-expanded.log`（5 项通过并记录 TEST SUCCEEDED）及 `page-turn-duo-immersive-core-final.log`（22 项通过）。截图附件由测试生成，但单独导出归档与修正断言后的 UIKit 专项补跑被工具宿主 RPC 时间预算拦截，未执行完成；不把它们列为额外通过项。本次未重跑全部 SDK／ASan，也未验证更多真实折叠姿态。下面的完整 SDK 数字保留为此前基线。
+
+### 此前 Duo 基础适配验收
 
 最终结果：**330 项完整 SDK Simulator 测试、53 项本轮 ASan、97 项 macOS 纯逻辑，以及 iPhone Duo / iOS 27.1 上的 3 项原生 UI 测试全部通过，零失败、零跳过**。SDK 全量和本轮测试启用 complete 严格并发与 Swift 警告视为错误检查；独立示例 Release 的 arm64／x86_64 Simulator 构建通过，部署基线仍为 iOS 15。
 

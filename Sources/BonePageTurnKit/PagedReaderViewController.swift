@@ -240,6 +240,24 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         scheduleCurrentPageReplacement()
     }
 
+    /// 外壳装饰改变正文尺寸但 renderer 尺寸不变时，同样使旧排版绑定和等待结果失效。
+    internal func invalidateEmbeddedContentLayout() {
+        guard isActive else { return }
+        cancelScrollInteractions()
+        automaticLayoutReady = false
+        automaticElapsed = 0
+        cancelTransition()
+        let info = currentPage.readingInfo
+        currentPage = PageContent(identity: currentPage.identity, controller: currentPage.controller,
+                                  readingInfo: .init(before: info.before, after: info.after))
+        metadataToken = PageViewBinding(identity: currentPage.identity, presentationID: presentationID)
+        contentRequestToken = PageViewBinding(identity: currentPage.identity, presentationID: presentationID)
+        currentPageBinding = PageViewBinding(identity: currentPage.identity, presentationID: presentationID)
+        publishReadingStatus()
+        refreshAutomaticReadingState()
+        scheduleCurrentPageReplacement()
+    }
+
     /// 仅更新当前页的统计和边界，不替换正文视图；迟到统计不得覆盖另一次展示。
     /// - Parameters: info: 宿主当前目录／排版快照的元数据；expectedToken: 请求开始时令牌。
     /// - Throws: renderer 失效、请求过期或翻页／回调占用。

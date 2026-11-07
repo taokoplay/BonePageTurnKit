@@ -20,8 +20,10 @@ final class DemoSceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        if ProcessInfo.processInfo.arguments.contains("--duo-reader") {
-            window.rootViewController = UINavigationController(rootViewController: DuoReaderDemoViewController())
+        if ProcessInfo.processInfo.arguments.contains("--surface-reader") {
+            window.rootViewController = ReaderSurfaceDemoViewController()
+        } else if ProcessInfo.processInfo.arguments.contains("--duo-reader") {
+            window.rootViewController = DuoReaderNavigationController(rootViewController: DuoReaderDemoViewController())
         } else if ProcessInfo.processInfo.arguments.contains("--expanded-reader") {
             window.rootViewController = AdvancedReaderDemoViewController()
         } else if ProcessInfo.processInfo.arguments.contains(where: { ["--paged-modes", "--paper-curl", "--paper-arch"].contains($0) }) {

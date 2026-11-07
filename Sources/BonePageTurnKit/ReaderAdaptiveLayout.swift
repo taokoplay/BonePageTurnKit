@@ -72,20 +72,31 @@ public enum ReaderAdaptiveLayoutError: Error, Sendable, Equatable {
     case tooManyRegions
 }
 
+/// 水平安全区的来源。宿主隐藏全部系统栏且能读取原生保留区域时，才可选择 reservedRegions。
+public enum ReaderHorizontalSafeAreaPolicy: Sendable, Equatable {
+    /// 默认按系统左右安全距离缩进。
+    case system
+    /// 用具体摄像头／折痕区域代替保守的整列左右缩进；上下安全距离仍保留。
+    case reservedRegions
+}
+
 /// 根据可读页的最小尺寸解析布局；尺寸阈值不是设备断点。
 public struct ReaderAdaptiveLayoutPolicy: Sendable, Equatable {
     public let prefersSpread: Bool
     public let minimumPageWidth: CGFloat
     public let minimumPageHeight: CGFloat
     public let spreadGap: CGFloat
+    public let horizontalSafeArea: ReaderHorizontalSafeAreaPolicy
 
-    /// - Parameters: prefersSpread: 是否优先双页；minimumPageWidth: 单页最小正宽度；minimumPageHeight: 单页最小正高度；spreadGap: 最小非负双页间距。
+    /// - Parameters: prefersSpread: 是否优先双页；minimumPageWidth: 单页最小正宽度；minimumPageHeight: 单页最小正高度；spreadGap: 最小非负双页间距；horizontalSafeArea: 水平安全区来源，默认使用全部系统边距。
     public init(prefersSpread: Bool = true, minimumPageWidth: CGFloat = 280,
-                minimumPageHeight: CGFloat = 240, spreadGap: CGFloat = 0) {
+                minimumPageHeight: CGFloat = 240, spreadGap: CGFloat = 0,
+                horizontalSafeArea: ReaderHorizontalSafeAreaPolicy = .system) {
         self.prefersSpread = prefersSpread
         self.minimumPageWidth = minimumPageWidth
         self.minimumPageHeight = minimumPageHeight
         self.spreadGap = spreadGap
+        self.horizontalSafeArea = horizontalSafeArea
     }
 
     /// - Parameter environment: 使用同一本地坐标系的视口快照，最多包含 64 个保留区域。
@@ -178,12 +189,13 @@ private extension ReaderAdaptiveLayoutPolicy {
     func safeFrame(in environment: ReaderViewportEnvironment) -> CGRect {
         let bounds = environment.bounds
         let insets = environment.safeAreaInsets
-        let left = min(CGFloat(insets.left), bounds.width)
+        let left = horizontalSafeArea == .system ? min(CGFloat(insets.left), bounds.width) : 0
         let top = min(CGFloat(insets.top), bounds.height)
         let width = bounds.width - left
         let height = bounds.height - top
+        let right = horizontalSafeArea == .system ? min(CGFloat(insets.right), width) : 0
         return containedRectangle(x: bounds.minX + left, y: bounds.minY + top,
-                                  right: max(bounds.minX + left, bounds.maxX - min(CGFloat(insets.right), width)),
+                                  right: max(bounds.minX + left, bounds.maxX - right),
                                   bottom: max(bounds.minY + top, bounds.maxY - min(CGFloat(insets.bottom), height)))
     }
 
