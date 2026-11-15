@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-已实现无动画、横纵平移、横向覆盖、横纵仿真／拱页及纵向连续阅读，并提供真实双页／中央书脊、显式 LTR／RTL、漫画切片、通用缩放与分页边缘交接、当前页原位替换、分页／连续自动阅读和补屏管理。Swift tools 5.9，无第三方依赖；未接入 ParsingBook 宿主。
+已实现无动画、横纵平移、横向覆盖、横纵仿真／拱页及纵向连续阅读，另提供系统卷页容器 `SystemCurlReaderViewController`（能力边界见 [系统仿真](Docs/SystemCurl.md)），并提供真实双页／中央书脊、显式 LTR／RTL、漫画切片、通用缩放与分页边缘交接、当前页原位替换、分页／连续自动阅读和补屏管理。Swift tools 5.9，无第三方依赖；未接入 ParsingBook 宿主。
 
 | 展示方式 | 水平 | 垂直 |
 | --- | --- | --- |
@@ -23,7 +23,9 @@
 - `Examples/ReaderDemo.xcodeproj`：独立可运行的示例 App，本地引用此包。
 - `Docs/`：抽离分析、设计依据、后续兼容验收要求。
 
-用 Xcode 打开 `Examples/ReaderDemo.xcodeproj`，选择 `ReaderDemo` 和 iOS Simulator 运行。示例可切换小说／漫画、无动画／覆盖／连续、完整内容／连载快照；提供首页、末页／最新和模拟更新按钮，显示本章与全书统计。小说仅按段落块计数，不冒充生产排版页；漫画按源页计数。启动参数 `--comic --serial --last` 可直接查看漫画最新页，追加 `--continuous` 可检查连续书尾。
+用 Xcode 打开 `Examples/ReaderDemo.xcodeproj`，选择 `ReaderDemo` 运行，默认进入全屏阅读，也可显式使用 `--fullscreen-reader`。正文样本为 218 页长文（`LongArticle.txt`，《三國演義》前十回节选，宿主自动分页）。分页模式下轻点左右两侧直接上一页／下一页，轻点中央展开／隐藏顶部导航和底部菜单，菜单显隐不缩小阅读画布。右上设置提供九组共 64 项配置和搜索，底部翻页方式采用六种类型网格和横向／纵向独立选择，另有三种自动阅读路径及 SDK 调试操作；包含真实文字、宽图／长图、双页、RTL、缩放、主题、装饰与加载预算。设置采用草稿应用／取消，拒绝不支持的组合，并保存已应用配置。入口、映射和验证范围见 [全屏 Demo](Docs/FullScreenDemo.md)。
+
+旧基础示例通过 `--legacy-reader` 打开，保留小说／漫画、完整内容／连载快照和模拟更新。小说按段落块计数，不冒充生产排版页；漫画按源页计数。`--comic --serial --last` 可直接查看漫画最新页，追加 `--continuous` 可检查连续书尾。
 
 启动参数 `--paged-modes` 可查看五种分页效果，追加 `--auto-start` 启动分页自动阅读。`--paper-curl`／`--paper-arch` 直接展示纸张效果，`--right-spine` 选择右书脊，`--paper-preview` 停在半翻状态；界面可执行当前页异步回填和取消。详见 [纸张曲面与原位替换](Docs/PaperAndPageReplacement.md) 及 [平移与分页自动阅读](Docs/SlideAndPagedAutomaticReading.md)。
 
@@ -32,6 +34,12 @@
 `--duo-reader` 打开 iPhone Duo 自适应示例，可追加 `--duo-source=5` 验证源页保位。菜单可隐藏系统控制栏，正文使用摄像头下方释放出的空间，右上角按钮恢复控制栏；显示与隐藏时均保持全屏纸张背景。它使用非对称安全区和 iOS 27.1 保留区域，宿主按可读空间在单双页间重建。接口、构建层级与姿态验证边界见 [iPhone Duo 适配](Docs/iPhoneDuo.md)。
 
 新增启动参数 `--async-styles` 可打开与测试共用的复杂样式异步宿主，追加 `--continuous` 查看连续模式。包括富文本、链接、行内附件、独立图片，以及加载中翻页、字号／主题重排和图片失败重试。新增 11 项真实 UIKit 渲染测试后，该阶段全量 93 项回归通过；新增用例在 ASan 下 11 项通过，配套正式测试为 `AsyncStyledRenderingTests`。延迟模拟任务完成顺序，不能代替原 App CoreText、真实网络与大图解码验收。
+
+仿真 `curl` 的原生拖动支持四角起翻和二维斜拖；手指主要沿翻页轴平移时按整页平翻呈现（不锁纸角），只有明显斜拉才翻起纸角。新增宿主触点输入接口，接入与边界见 [四角跟手仿真](Docs/CornerCurl.md)。 原生四角绘制已使用 Metal 批量提交、触点按刷新合并，统一纸背材质；iPhone 13 Pro 的 Release 测量方法、结果和适用范围见 [性能与材质](Docs/CornerCurlPerformance.md)。
+
+高刷新率屏幕使用实际窗口的最高帧率申请，Demo 已显式启用 ProMotion。宿主配置、120Hz 测量与适用范围见 [高刷新率](Docs/HighRefresh.md)。
+
+排查卡顿或动画中途消失时，可开启 [动画参数与实时帧率诊断](Docs/AnimationDiagnostics.md)：分别观察屏幕上限、申请 Hz、翻页回调 FPS、Metal 呈现 FPS，并复制有界的时长、队列、准备耗时及结束原因日志。
 
 ## 固定分页接入
 
@@ -90,7 +98,9 @@ try paged.turn(.next)
 
 ## 通用点击、自动阅读与退出
 
-分页可配置 `tapConfiguration = try ReaderTapConfiguration()`，默认前／中／后三区。`shouldHandleTap` 让宿主先消费图片、链接或选区命中；`onCenterTap` 仅发出中心操作通知。内置 tap 等待 pan 失败，暂停、过渡、挂载和同步回调期间拒绝重入。
+新增连续可见视图/绑定查询、点击与原生 pan 门禁、四类独立暂停目标，以及分页实时进度、保留意图的变速接口。`--automatic-reader` 示例覆盖外部手势、自动滚屏、定时左右翻阅。完整接入契约见 [连续交互与三种自动阅读](Docs/HostInteractionAndAutomaticReading.md)。Surface 也公开可取消退出协议，最终完成以 `onExitFinalized` 为准。覆盖效果可配置过渡圆角和阴影，见 [覆盖样式](Docs/CoverRendering.md)。
+
+分页可配置 `tapConfiguration = try ReaderTapConfiguration()`，默认前／中／后三区。`shouldHandleTap` 让宿主先消费图片、链接或选区命中；`onCenterTap` 仅发出中心操作通知。内置 tap 等待 pan 失败。过渡中的连续轻点与原生滑动按序排队（上限 32 笔），上一笔完整落定后继续，手指仍按住拖动时仍拒绝第二个事务。仿真／拱页的整页播放采用系统缓入缓出曲线，普通约 360ms、最快连翻约 288ms；手速倍率不低于 0.8，队列深度不再额外压缩时长，避免卷曲中段被跳过。拖动松手保留原有收尾曲线。平移／覆盖保留原来的手速倍率；宿主可开启 `handsOverActiveTransitionOnNewIntent` 立即接管。低层 `beginInteractiveTurn` 仍允许宿主显式接管 curl 收尾，原生手势与 `turn` 不主动截断纸张动画。暂停、挂载和同步回调期间继续拒绝重入。
 
 连续模式提供 `startAutomaticReading(pointsPerSecond:)`、`pauseAutomaticReading()`、`resumeAutomaticReading()`、`stopAutomaticReading(commitPosition:)`。真实 CADisplayLink 推进不会改变窗口令牌；占位、加载、失败、最新内容与未知边界先等待，只有明确 endOfBook 才结束。临时拖动／减速／离屏／后台／外部暂停后恢复原播放意图，用户主动暂停不会被异步结果自动唤醒。显式 restore 停止自动阅读。
 
@@ -192,7 +202,7 @@ submit 不等于 installed：拖动／减速结束、全部暂停原因解除后
 
 ## 验证
 
-最新结果：完整 SDK Simulator 370 项、页面外壳 ASan 37 项、纯逻辑 118 项通过；页面外壳独立示例另有 2 项原生 UI 测试，覆盖三档分页、连续固定装饰与坐标输出。完整测试启用严格并发与 Swift 警告视为错误检查，Release 多架构示例构建通过。最新证据及范围见 [页面外壳验收](Docs/ReaderSurface.md)，Duo 与其他历史场景保留各自阶段记录。
+SDK 功能补齐阶段已通过 Simulator 417 项、相关 ASan 47 项、纯逻辑 120 项，以及三种自动阅读示例的 3 项原生 UI 测试。全屏 Demo 另以原生 UI 测试验证画布显隐、翻页组合、设置、双页、图片、自动阅读和连续回填，详见 [全屏 Demo 验收](Docs/FullScreenDemo.md)。本轮 Demo 保持 SDK 本体不变；各阶段证据分别保存在对应文档中。构建继续启用严格并发与 Swift 警告视为错误检查。
 
 纯逻辑测试（macOS 不编译 UIKit 后端）：
 

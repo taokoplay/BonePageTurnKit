@@ -20,7 +20,14 @@ final class DemoSceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
-        if ProcessInfo.processInfo.arguments.contains("--surface-reader") {
+        if ProcessInfo.processInfo.arguments.contains("--system-curl") {
+            let autoplay: TimeInterval? = ProcessInfo.processInfo.arguments.contains("--autoplay") ? 0.45 : nil
+            window.rootViewController = SystemCurlDemoViewController(autoplayInterval: autoplay)
+        } else if ProcessInfo.processInfo.arguments.contains("--fullscreen-reader") {
+            window.rootViewController = FullScreenReaderDemoViewController()
+        } else if ProcessInfo.processInfo.arguments.contains("--automatic-reader") {
+            window.rootViewController = AutomaticReadingDemoViewController()
+        } else if ProcessInfo.processInfo.arguments.contains("--surface-reader") {
             window.rootViewController = ReaderSurfaceDemoViewController()
         } else if ProcessInfo.processInfo.arguments.contains("--duo-reader") {
             window.rootViewController = DuoReaderNavigationController(rootViewController: DuoReaderDemoViewController())
@@ -34,8 +41,10 @@ final class DemoSceneDelegate: UIResponder, UIWindowSceneDelegate {
             window.rootViewController = SDKInteractionDemoViewController()
         } else if ProcessInfo.processInfo.arguments.contains("--async-styles") {
             window.rootViewController = AsyncRenderingDemoViewController()
-        } else {
+        } else if ProcessInfo.processInfo.arguments.contains(where: { ["--legacy-reader", "--comic", "--serial", "--last", "--continuous"].contains($0) }) {
             window.rootViewController = ReaderDemoViewController()
+        } else {
+            window.rootViewController = FullScreenReaderDemoViewController()
         }
         window.makeKeyAndVisible()
         self.window = window

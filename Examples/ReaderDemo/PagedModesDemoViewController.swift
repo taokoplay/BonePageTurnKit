@@ -37,7 +37,7 @@ final class PagedModesDemoViewController: UIViewController {
         view.backgroundColor = .systemBackground
         title = "分页模式"
         let arguments = ProcessInfo.processInfo.arguments
-        effects.selectedSegmentIndex = arguments.contains("--paper-arch") ? 4 : (arguments.contains("--paper-curl") ? 3 : 0)
+        effects.selectedSegmentIndex = arguments.contains("--cover-style") ? 1 : (arguments.contains("--paper-arch") ? 4 : (arguments.contains("--paper-curl") ? 3 : 0))
         spines.selectedSegmentIndex = arguments.contains("--right-spine") ? 3 : 0
         spines.accessibilityIdentifier = "paged-spine"
         spines.addTarget(self, action: #selector(changeMode), for: .valueChanged)
@@ -206,7 +206,9 @@ final class PagedModesDemoViewController: UIViewController {
         let axisIndex = axes.selectedSegmentIndex
         let spineIndex = spines.selectedSegmentIndex
         let configuration = PageTurnConfiguration(presentation: .paged(effect: effectValues[effectIndex], axis: axisValues[axisIndex]),
-                                                 spine: spineValues[spineIndex])
+                                                 spine: spineValues[spineIndex],
+                                                 cover: ProcessInfo.processInfo.arguments.contains("--cover-style")
+                                                    ? .init(cornerRadius: 36, shadowOpacity: 0.35, shadowRadius: 24, shadowOffsetX: 12) : .standard)
         do {
             try configuration.validate()
             let index = reader.pagedReader.flatMap { Int($0.currentPage.identity.unitID) } ?? 0
