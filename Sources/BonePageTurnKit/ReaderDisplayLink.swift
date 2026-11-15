@@ -21,15 +21,29 @@ final class ReaderDisplayLink {
     private var lastTimestamp: CFTimeInterval?
     var onTick: ((TimeInterval) -> Void)?
     var isRunning: Bool { lifetime.link != nil }
+    /// 当前向系统申请的范围；不代表系统实际交付或屏幕实测刷新率。
+    var activeFrameRateRange: CAFrameRateRange? { lifetime.link?.preferredFrameRateRange }
 
     /// 创建尚未启动的时钟，不注册系统观察。
     init() { target.owner = self }
 
-    /// 开始每帧回调；重复调用不重置时间基准。
-    func start() {
-        guard lifetime.link == nil else { return }
+    /// - Parameter maximumFramesPerSecond: 当前窗口屏幕的最高帧率；nil 或非正值时读取主屏幕。
+    /// - Returns: 无返回值；重复调用更新申请范围而不重置时间基准，空闲仍由 stop() 停止。
+    func start(maximumFramesPerSecond: Int? = nil) {
+        let requested = maximumFramesPerSecond ?? UIScreen.main.maximumFramesPerSecond
+        let maximum = Float(requested > 0 ? requested : max(1, UIScreen.main.maximumFramesPerSecond))
+        // ProMotion 优先申请高帧率；普通屏幕按其实际上限，不使用固定设备型号分支。
+        let range = CAFrameRateRange(minimum: min(80, maximum), maximum: maximum, preferred: maximum)
+        if let link = lifetime.link {
+            let active = link.preferredFrameRateRange
+            if active.minimum != range.minimum || active.maximum != range.maximum || active.preferred != range.preferred {
+                link.preferredFrameRateRange = range
+            }
+            return
+        }
         lastTimestamp = nil
         let link = CADisplayLink(target: target, selector: #selector(Target.tick(_:)))
+        link.preferredFrameRateRange = range
         lifetime.link = link
         link.add(to: .main, forMode: .common)
     }

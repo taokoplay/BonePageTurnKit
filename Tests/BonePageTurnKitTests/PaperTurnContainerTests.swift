@@ -57,6 +57,8 @@ final class PaperTurnContainerTests: XCTestCase {
             get { sampleState }
             set { sampleState = newValue }
         }
+        // 此 fixture 验证页中滑动方向；角落抓取由独立二维测试覆盖。
+        override func location(in view: UIView?) -> CGPoint { CGPoint(x: 160, y: 240) }
         override func translation(in view: UIView?) -> CGPoint { sampleTranslation }
         override func velocity(in view: UIView?) -> CGPoint { sampleVelocity }
     }

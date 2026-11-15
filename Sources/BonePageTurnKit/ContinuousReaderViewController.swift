@@ -15,7 +15,7 @@ public protocol ContinuousContentProvider: AnyObject {
 
 /// 纵向任意位置连续滚动；异高窗口、内容视图复用和锚点补偿均独立于宿主业务。
 @MainActor
-public final class ContinuousReaderViewController: UIViewController, UIScrollViewDelegate {
+public final class ContinuousReaderViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     public let presentationID = UUID()
     public private(set) var window: ContinuousWindow
     public private(set) var isActive = true
@@ -32,6 +32,12 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         guard visibleAnchor != nil else { return nil }
         return window.readableCoverage(at: Double(scrollView.contentOffset.y), viewportExtent: Double(scrollView.bounds.height))
     }
+    /// 用户开始滚动前的放行问询；不替换 UIScrollView 的原生手势代理。
+    public var shouldBeginPan: ((UIPanGestureRecognizer) -> Bool)?
+    /// 先处理链接／图片／选区；false 表示该点击已被宿主消费。
+    public var shouldHandleTap: ((ContinuousTapContext) -> Bool)? { didSet { refreshTapEnabled() } }
+    /// 可选正文点击，默认不安装业务行为；点与可见矩形均使用 reader.view 坐标。
+    public var onTap: ((ContinuousTapContext) -> Void)? { didSet { refreshTapEnabled() } }
     public var onInteractionIdle: (() -> Void)?
     public var onViewportSizeChange: ((CGSize) -> Void)?
     /// 首次布局发现目标屏幕位置超出视口时通知宿主；解析完成前不发布阅读位置。
@@ -65,14 +71,20 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
     }
     private weak var provider: (any ContinuousContentProvider)?
     // 内部保留访问，@testable 的 UIKit 测试可以驱动真实 UIScrollView。
-    let scrollView = UIScrollView()
+    let scrollView = ReaderContinuousScrollView()
     private let contentView = UIView()
     private var mounted: [String: Mounted] = [:]
     private var pool: [(String, UIView)] = []
     private var revision: UInt64 = 0
     private var updating = false
     private var notifying = false
-    private var suspensionReasons: Set<String> = []
+    private var suspensions: [String: ContinuousSuspensionTargets] = [:]
+    private var activeSuspensions: ContinuousSuspensionTargets {
+        suspensions.values.reduce([]) { $0.union($1) }
+    }
+    private lazy var tap = UITapGestureRecognizer(target: self, action: #selector(receiveTap(_:)))
+    private var idleNotificationScheduled = false
+    private var deliveringIdle = false
     private var initialAnchor: ContinuousAnchor?
     private var viewportSize = CGSize.zero
     private var lastStableAnchor: ContinuousAnchor?
@@ -126,6 +138,12 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.alwaysBounceVertical = true
         scrollView.delegate = self
+        scrollView.allowUserPan = { [weak self] pan in self?.canBeginUserPan(pan) ?? false }
+        scrollView.isScrollEnabled = !activeSuspensions.contains(.userScrolling)
+        tap.delegate = self
+        tap.require(toFail: scrollView.panGestureRecognizer)
+        view.addGestureRecognizer(tap)
+        refreshTapEnabled()
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         automaticClock.onTick = { [weak self] interval in self?.advanceAutomaticReading(elapsed: interval) }
@@ -313,7 +331,7 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         guard isActive, !updating, !notifying, !notifyingAutomaticState, !loads.isInTerminalCallback,
               isViewLoaded, scrollView.bounds.height > 0, scrollView.bounds.width > 0,
               !scrollView.isTracking, !scrollView.isDragging, !scrollView.isDecelerating,
-              suspensionReasons.isEmpty, let prepared = loads.preparedUpdate else { return }
+              !activeSuspensions.contains(.contentInstallation), let prepared = loads.preparedUpdate else { return }
         installingTicket = prepared.ticket
         defer { installingTicket = nil }
         do {
@@ -332,16 +350,60 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         isActive && binding.presentationID == presentationID && mounted[binding.identity.unitID]?.binding == binding
     }
 
-    /// - Parameters: suspended: 是否暂停；reason: 独立原因。解除后仅恢复原先仍为播放意图的自动阅读。
+    /// - Parameters: suspended: 是否暂停所有目标；reason: 独立原因，不影响其他原因或用户主动暂停。
     public func setSuspended(_ suspended: Bool, reason: String) {
-        if suspended { suspensionReasons.insert(reason) } else { suspensionReasons.remove(reason) }
-        if suspended { scrollView.setContentOffset(scrollView.contentOffset, animated: false) }
-        scrollView.isScrollEnabled = isActive && suspensionReasons.isEmpty
-        refreshAutomaticReadingState()
-        if !suspended, suspensionReasons.isEmpty, isActive {
-            installPendingUpdateIfIdle()
-            onInteractionIdle?()
+        setSuspended(suspended, targets: .all, reason: reason)
+    }
+
+    /// 按原因累加／撤销指定暂停目标；已有选区可只暂停自动驱动，拖光标时再暂停滚动与安装。
+    /// - Parameters: suspended: 添加或解除；targets: 控制目标，未知位忽略；reason: 同一拥有者配对的稳定标识。
+    public func setSuspended(_ suspended: Bool, targets: ContinuousSuspensionTargets, reason: String) {
+        guard isActive else { return }
+        let targets = targets.intersection(.all)
+        guard !targets.isEmpty else { return }
+        let previous = activeSuspensions
+        let oldOwned = suspensions[reason] ?? []
+        var owned = oldOwned
+        if suspended { owned.formUnion(targets) } else { owned.subtract(targets) }
+        guard owned != oldOwned else { return }
+        if owned.isEmpty { suspensions.removeValue(forKey: reason) } else { suspensions[reason] = owned }
+        let current = activeSuspensions
+        // 取消原生 pan 后不依赖系统一定再发 didEndDragging 来解除自动驱动的占用。
+        if current.contains(.userScrolling), !previous.contains(.userScrolling) {
+            scrollView.isScrollEnabled = false
+            scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+            automaticInteractionActive = false
         }
+        scrollView.isScrollEnabled = !current.contains(.userScrolling)
+        refreshTapEnabled()
+        refreshAutomaticReadingState()
+        if !suspended { notifyInteractionIdleWhenPossible() }
+    }
+
+    /// - Returns: 当前所有原因合并后的暂停目标；不会把用户主动暂停伪装成临时原因。
+    public var suspendedTargets: ContinuousSuspensionTargets { activeSuspensions }
+
+    /// 在通知重入时只安排一次主队列交付，不轮询手势或加载状态。
+    private func notifyInteractionIdleWhenPossible() {
+        guard isActive, !deliveringIdle, !activeSuspensions.contains(.contentInstallation),
+              !scrollView.isTracking, !scrollView.isDragging, !scrollView.isDecelerating else { return }
+        if updating || notifying || notifyingAutomaticState || loads.isInTerminalCallback {
+            guard !idleNotificationScheduled else { return }
+            idleNotificationScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.idleNotificationScheduled = false
+                self.notifyInteractionIdleWhenPossible()
+            }
+            return
+        }
+        installPendingUpdateIfIdle()
+        guard isActive else { return }
+        deliveringIdle = true
+        onInteractionIdle?()
+        deliveringIdle = false
+        refreshAutomaticReadingState()
+        schedulePendingInstallation()
     }
 
     /// 退出／模式切换时终止回调并使所有绑定失效；可重复调用。
@@ -354,7 +416,13 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         automaticClock.stop()
         NotificationCenter.default.removeObserver(self)
         scrollView.delegate = nil
+        scrollView.allowUserPan = nil
         scrollView.isScrollEnabled = false
+        tap.isEnabled = false
+        shouldBeginPan = nil
+        shouldHandleTap = nil
+        onTap = nil
+        suspensions.removeAll()
         loads.invalidate()
         for key in Array(mounted.keys) { recycle(key) }
         pool.removeAll()
@@ -407,7 +475,7 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         guard token.presentationID == presentationID else { throw PageTurnError.stalePresentation }
         guard token.revision == revision else { throw PageTurnError.staleWindow }
         guard !updating, !notifying, !notifyingAutomaticState, !loads.isInTerminalCallback, !scrollView.isTracking, !scrollView.isDragging,
-              !scrollView.isDecelerating, suspensionReasons.isEmpty else { throw PageTurnError.interactionInProgress }
+              !scrollView.isDecelerating, !activeSuspensions.contains(.contentInstallation) else { throw PageTurnError.interactionInProgress }
     }
 
     /// 更新内容大小；调用方抑制中间 scroll 回调。
@@ -485,7 +553,7 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         let index = window.indices(intersecting: clamped, clamped + 1).first
         if (stable || automaticCommitPending), automaticIntent != .playing,
            !automaticInteractionActive, !scrollView.isDragging, !scrollView.isDecelerating, !scrollView.isTracking,
-           (suspensionReasons.isEmpty || automaticCommitPending), abs(offset - clamped) < 0.5,
+           (!activeSuspensions.contains(.contentInstallation) || automaticCommitPending), abs(offset - clamped) < 0.5,
            let index, window.items[index].state == .ready,
            mounted[anchor.identity.unitID]?.binding.identity == anchor.identity {
             automaticCommitPending = false
@@ -560,6 +628,97 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         if isActive { onInteractionIdle?() }
     }
 
+    // MARK: - 可见内容与宿主交互
+
+    /// - Parameter binding: 完整复用绑定；不接受仅凭 unitID 获取迟到异步结果的视图。
+    /// - Returns: 仍归本容器持有的已挂载视图，可能处于预取区；失效或被外部移走时 nil。
+    public func contentView(for binding: PageViewBinding) -> UIView? {
+        guard isCurrent(binding), let entry = mounted[binding.identity.unitID],
+              entry.view.superview === contentView else { return nil }
+        return entry.view
+    }
+
+    /// - Parameter target: 目标坐标系；nil 表示 reader.view，不表示窗口。
+    /// - Returns: 按阅读顺序排列的实际可见块快照，不包含预取块；调用方使用前应校验 binding。
+    public func visibleContents(in target: UIView? = nil) -> [ContinuousVisibleContent] {
+        guard isActive, isViewLoaded, initialAnchor == nil else { return [] }
+        let viewport = scrollView.convert(scrollView.bounds, to: view).intersection(view.bounds)
+        guard !viewport.isNull, !viewport.isEmpty else { return [] }
+        let destination = target ?? view
+        return mounted.values.sorted { $0.view.frame.minY < $1.view.frame.minY }.compactMap { entry in
+            guard entry.view.superview === contentView, !entry.view.isHidden else { return nil }
+            let frame = entry.view.convert(entry.view.bounds, to: view)
+            let visible = frame.intersection(viewport)
+            guard !visible.isNull, !visible.isEmpty else { return nil }
+            return ContinuousVisibleContent(item: entry.item, binding: entry.binding, view: entry.view,
+                                            frame: view.convert(frame, to: destination),
+                                            visibleFrame: view.convert(visible, to: destination))
+        }
+    }
+
+    /// - Parameters: point: 待查询点；sourceView: 点的坐标系，nil 表示 reader.view。
+    /// - Returns: 真实可见块及 reader.view 中矩形；空白、无效点或预取区返回 nil。
+    public func visibleContent(at point: CGPoint, in sourceView: UIView? = nil) -> ContinuousVisibleContent? {
+        guard point.x.isFinite, point.y.isFinite, isViewLoaded else { return nil }
+        let local = sourceView.map { view.convert(point, from: $0) } ?? point
+        return visibleContents().first { $0.visibleFrame.contains(local) }
+    }
+
+    /// - Parameter point: reader.view 内点击位置。
+    /// - Returns: onTap 已接收时 true；业务拦截、暂停或越界时 false。
+    /// - Throws: 失效容器或同步 UI 通知重入；宿主自定义九宫格也可从这里分发。
+    @discardableResult
+    public func handleTap(at point: CGPoint) throws -> Bool {
+        guard isActive else { throw PageTurnError.inactive }
+        guard !notifying, !updating, !notifyingAutomaticState, !loads.isInTerminalCallback else {
+            throw PageTurnError.interactionInProgress
+        }
+        guard isViewLoaded, point.x.isFinite, point.y.isFinite, view.bounds.contains(point),
+              !activeSuspensions.contains(.taps), !automaticInteractionActive,
+              !scrollView.isTracking, !scrollView.isDragging, !scrollView.isDecelerating else { return false }
+        let visible = visibleContent(at: point)
+        let context = ContinuousTapContext(point: point, content: visible,
+                                            pointInContent: visible.map { $0.view.convert(point, from: view) })
+        let token = updateToken
+        notifying = true
+        defer { notifying = false; refreshAutomaticReadingState(); schedulePendingInstallation() }
+        guard shouldHandleTap?(context) ?? true else { return false }
+        guard isActive, token == updateToken, !activeSuspensions.contains(.taps),
+              visible.map({ isCurrent($0.binding) && $0.view.superview === contentView }) ?? true,
+              let handler = onTap else { return false }
+        handler(context)
+        return true
+    }
+
+    /// 原生滚动开始前同步问询并复核回调造成的生命周期变化。
+    /// - Parameter pan: UIScrollView 自己的 pan。返回 false 不会替换其 delegate。
+    internal func canBeginUserPan(_ pan: UIPanGestureRecognizer) -> Bool {
+        guard isActive, !notifying, !updating, !notifyingAutomaticState,
+              !activeSuspensions.contains(.userScrolling) else { return false }
+        notifying = true
+        let allowed = shouldBeginPan?(pan) ?? true
+        notifying = false
+        refreshAutomaticReadingState()
+        schedulePendingInstallation()
+        return allowed && isActive && !activeSuspensions.contains(.userScrolling)
+    }
+
+    private func refreshTapEnabled() {
+        tap.isEnabled = isActive && !activeSuspensions.contains(.taps) && (onTap != nil || shouldHandleTap != nil)
+    }
+    @objc private func receiveTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        _ = try? handleTap(at: recognizer.location(in: view))
+    }
+    public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var target = touch.view
+        while let current = target, current !== view {
+            if current is UIControl { return false }
+            target = current.superview
+        }
+        return isActive && !activeSuspensions.contains(.taps)
+    }
+
     // MARK: - 连续自动阅读
 
     /// 开始向后连续阅读。速度有限且为 (0, 2000] point/s；不改变窗口请求版本。
@@ -578,6 +737,20 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         automaticCommitPending = false
         refreshAutomaticReadingState()
         publishPosition(stable: false)
+    }
+
+    /// 修改速度，不重置位置、窗口令牌或用户的播放／暂停意图。
+    /// - Parameter pointsPerSecond: 有限的 (0, 2000] point/s。
+    /// - Throws: 非法速度、失效或同步通知重入；失败保留旧速度。
+    public func updateAutomaticReadingSpeed(pointsPerSecond: Double) throws {
+        guard isActive else { throw PageTurnError.inactive }
+        guard pointsPerSecond.isFinite, pointsPerSecond > 0, pointsPerSecond <= 2000 else {
+            throw ContinuousAutomaticReadingError.invalidSpeed
+        }
+        guard !updating, !notifying, !notifyingAutomaticState, !loads.isInTerminalCallback else {
+            throw PageTurnError.interactionInProgress
+        }
+        automaticReadingSpeed = pointsPerSecond
     }
 
     /// 主动暂停并尝试提交有效位置；后续加载完成、关闭菜单或前台恢复不会擅自继续。
@@ -663,7 +836,7 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
         case .finished: state = .finished(.endOfBook)
         case .playing:
             if !automaticViewVisible || !automaticApplicationActive || automaticInteractionActive ||
-                !suspensionReasons.isEmpty || scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
+                activeSuspensions.contains(.automaticReading) || scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating {
                 state = .paused
             } else if !isViewLoaded || initialAnchor != nil || !paginationMatchesViewport || provider == nil ||
                         scrollView.bounds.height <= 0 || scrollView.bounds.width <= 0 {
@@ -683,7 +856,7 @@ public final class ContinuousReaderViewController: UIViewController, UIScrollVie
                 } else { state = .running }
             }
         }
-        if state == .running, usesDisplayLinkForAutomaticReading { automaticClock.start() }
+        if state == .running, usesDisplayLinkForAutomaticReading { automaticClock.start(maximumFramesPerSecond: view.window?.screen.maximumFramesPerSecond) }
         else { automaticClock.stop() }
         if state != .running {
             automaticTargetOffset = nil

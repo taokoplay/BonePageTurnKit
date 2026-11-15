@@ -59,7 +59,8 @@ public struct ReaderSurfaceDecorations {
     public let update: ((ReaderSurfaceDecorationViews, ReaderSurfaceContext) -> Void)?
 
     /// - Parameters: makeHeader: 页眉工厂；makeFooter: 页脚工厂；makeBackground: 主题背景工厂；update: 当前内容身份或统计改变后更新已有装饰。
-    public init(makeHeader: ((ReaderSurfaceContext) -> UIView)? = nil,
+    /// 非隔离初始化：允许作为 MainActor 类型的默认参数表达式求值。
+    public nonisolated init(makeHeader: ((ReaderSurfaceContext) -> UIView)? = nil,
                 makeFooter: ((ReaderSurfaceContext) -> UIView)? = nil,
                 makeBackground: ((ReaderSurfaceContext) -> UIView)? = nil,
                 update: ((ReaderSurfaceDecorationViews, ReaderSurfaceContext) -> Void)? = nil) {

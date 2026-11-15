@@ -28,6 +28,7 @@ public enum PageTurnError: Error, Equatable {
     case snapshotUnavailable
     case unsupportedLayout
     case invalidPageLayout
+    case invalidInteractionPoint
 }
 
 public struct PageTurnConfiguration: Sendable, Equatable {
@@ -37,20 +38,22 @@ public struct PageTurnConfiguration: Sendable, Equatable {
     public let readingOrder: ReaderReadingOrder
 
     public let paper: PaperRenderingOptions
+    public let cover: CoverRenderingOptions
     /// 创建配置值；安装前调用 validate()，失败时不修改当前展示。
-    /// - Parameters: presentation: 展示方式；spine: 纸张书脊；paper: 快照预算；layout: 单页或双页；readingOrder: 显式内容顺序。
+    /// - Parameters: presentation: 展示方式；spine: 纸张书脊；paper: 快照预算；layout: 单页或双页；readingOrder: 显式内容顺序；cover: 覆盖翻页的瞬时圆角与阴影。
     public init(presentation: PageTurnPresentation, spine: PageSpinePlacement = .automatic,
                 paper: PaperRenderingOptions = .standard, layout: ReaderPageLayout = .single,
-                readingOrder: ReaderReadingOrder = .leftToRight) {
+                readingOrder: ReaderReadingOrder = .leftToRight, cover: CoverRenderingOptions = .standard) {
         self.presentation = presentation
         self.spine = spine
         self.paper = paper
         self.layout = layout
         self.readingOrder = readingOrder
+        self.cover = cover
     }
 
     /// 校验实际支持的效果、轴向与单双页配置；双页纸张使用中央书脊。
-    /// - Throws: 不支持的展示或书脊错误。
+    /// - Throws: 不支持的展示、书脊、纸张预算或 CoverRenderingError 装饰参数错误。
     public func validate() throws {
         guard Self.supportedPresentations.contains(presentation) else {
             throw PageTurnError.unsupportedPresentation
@@ -58,6 +61,7 @@ public struct PageTurnConfiguration: Sendable, Equatable {
         if case .continuous = presentation, layout != .single { throw PageTurnError.unsupportedLayout }
         guard Self.supportedSpines(for: presentation, layout: layout).contains(spine) else { throw PageTurnError.unsupportedSpine }
         try paper.validate()
+        try cover.validate()
     }
 
     public static let supportedPresentations: [PageTurnPresentation] = [

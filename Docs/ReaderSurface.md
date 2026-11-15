@@ -118,6 +118,40 @@ let continuous = try surface.showContinuous(
 
 provider 由宿主保留，块的 extent 只包含正文自身占用高度；不包括页眉、页脚或为了凑屏而添加的留白。SDK 连续容器放入 bodyFrame，固定页眉页脚和背景留在外壳。装饰显隐改变正文视口后仍使用既有连续锚点补偿，真正宽度重排则由宿主重新生产块与语义锚点。
 
+## 可取消退出与最终完成
+
+外壳公开 `isExitInProgress`、`onExitFinalized`、`beginExit() throws -> ReaderExitToken`、`cancelExit(_:) -> Bool` 和 `finishExit(_:) -> Bool`，直接复用私有 `PageTurnViewController` 的退出事务。宿主无需查找 UIKit children 或操作内部容器。
+
+- `beginExit()` 只增加退出自身的暂停原因，保留 renderer、加载会话及用户播放意图；重复调用返回同一令牌。`isActive` 仍为 true，`isExitInProgress` 为 true。
+- `cancelExit(token)` 只解除退出自己的原因。菜单、选区等其他原因未解除或用户已主动暂停时，不会恢复自动阅读。成功取消后可重新开始，旧令牌、跨外壳令牌不影响新事务。
+- `finishExit(token)` 返回 true 表示接受确认，不能据此立即释放保存回调或调用 `invalidate()`。连续 renderer 在 UI 通知内确认退出时会延后最终提交尝试；等待期间外壳和 renderer 继续保持有效，重复结束及取消均返回 false。
+- 底层最终位置提交尝试及 renderer 失效完成后，外壳才设 `isActive = false`、清理外壳回调与待交付布局通知、将 `isExitInProgress` 置为 false，最后恰好一次交付 `onExitFinalized(token)`。空外壳和分页模式也遵循该完成边界；完成可能同步发生，应先设置回调再确认退出。
+- 从开始退出到最终完成，`showPaged`、`showContinuous`、原位替换／提交、`updateMetrics`、`updateViewportPolicy` 均抛出 `ReaderSurfaceError.interactionInProgress`。布局成功通知暂停交付；取消后重新合并交付最新布局。独立 `setSuspended` 原因仍可配对更新。
+- 取消恢复交互会同步回调宿主；该回调内新建退出抛出 `interactionInProgress`，取消、结束及展示／配置修改被拒绝。等待最终提交或 renderer 清理期间重复开始仍返回原令牌，不能开启另一笔事务。
+- `invalidate()` 是立即终止路径：不补做最终位置提交，不通知 `onExitFinalized`，并覆盖已排队的退出完成。失效后 `beginExit()` 抛出 `ReaderSurfaceError.inactive`，取消和结束返回 false，外壳不能再次展示；需创建新外壳。
+
+连续模式只**尝试提交有效稳定位置**：加载占位、拖动、回弹等状态不保证产生新 `onStableAnchor`，相同稳定锚点也不会重复通知。分页继续采用已提交的页面状态，不虚构额外保存事件。宿主必须持续保留最后一个有效位置，不能在开始退出时清空它，也不能将“最终完成”等同于“本次一定新增保存”。
+
+```swift
+// 先接好保存与实际导航；宿主负责保留最后一个有效语义位置。
+continuous.onStableAnchor = { [weak host] anchor in
+    host?.saveLastValidAnchor(anchor)
+}
+surface.onExitFinalized = { [weak host] token in
+    // 此时 surface 与 renderer 都已失效，保存尝试已经结束。
+    host?.completeNavigation(exitToken: token)
+}
+
+let exitToken = try surface.beginExit()
+// 退出交互被取消：
+// surface.cancelExit(exitToken)
+
+// 用户确认离开：用上面捕获的令牌，只在 onExitFinalized 中完成实际导航。
+_ = surface.finishExit(exitToken)
+```
+
+SDK 在确认退出等待异步提交期间临时保留外壳及内部容器，完成或手动失效后解除。宿主回调仍应弱捕获业务控制器，且不要覆盖外壳管理的 renderer 回调；连续 `onStableAnchor` 可由宿主设置。
+
 ## 安全区与当前范围
 
 新外壳默认使用 `ReaderAdaptiveLayoutPolicy(prefersSpread: false)`，先避让安全区和实际保留区域，再计算装饰与正文。宿主已经限定好视口时可传 `viewportPolicy: nil` 使用整个 bounds，避免重复扣安全区；可以用 `updateViewportPolicy` 切换策略。沉浸阅读可按已有 Duo 接入规则选用 `.reservedRegions` 水平策略。背景始终位于完整 bounds，正文和装饰只占可读区域。

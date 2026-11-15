@@ -55,10 +55,12 @@ public final class ReaderScrollHandoff: NSObject {
     }
 
     /// 注销并归还滚动属性；重复调用无副作用，不修改宿主的 delegate。
-    public func invalidate() {
+    public func invalidate() { invalidate(reason: .cancelled) }
+
+    internal func invalidate(reason: PageTurnAnimationDiagnostic.EndReason) {
         guard isActive else { return }
         isActive = false
-        cancelInteraction()
+        cancelInteraction(reason: reason)
         scrollView?.panGestureRecognizer.removeTarget(self, action: #selector(panChanged(_:)))
         scrollView?.pinchGestureRecognizer?.removeTarget(self, action: #selector(pinchChanged(_:)))
         if horizontal { scrollView?.alwaysBounceHorizontal = originalAlwaysBounce }
@@ -67,12 +69,12 @@ public final class ReaderScrollHandoff: NSObject {
     }
 
     /// 暂停／退出／尺寸改变时清理手势所有权，登记仍可供下一次拖动使用。
-    internal func cancelInteraction() {
-        endTracking(pan: false, pinch: false)
+    internal func cancelInteraction(reason: PageTurnAnimationDiagnostic.EndReason = .cancelled) {
+        endTracking(pan: false, pinch: false, reason: reason)
     }
 
     /// - Parameters: pan: 是否仍有由内层独占的拖动；pinch: 是否仍有捏合。
-    private func endTracking(pan: Bool, pinch: Bool) {
+    private func endTracking(pan: Bool, pinch: Bool, reason: PageTurnAnimationDiagnostic.EndReason = .cancelled) {
         let owned = transactionID
         transactionID = nil
         isHandingOff = false
@@ -80,7 +82,7 @@ public final class ReaderScrollHandoff: NSObject {
         panActive = pan
         pinchActive = pinch
         restoreScrollProperties()
-        if let owned, reader?.activeTransitionID == owned { reader?.cancelTransition() }
+        if let owned, reader?.activeTransitionID == owned { reader?.cancelTransition(reason: reason) }
         reader?.setScrollInteraction(pan || pinch, id: id)
     }
 

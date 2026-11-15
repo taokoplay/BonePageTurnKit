@@ -18,20 +18,78 @@ final class PaperTransitionView: UIView {
     private let readingOrder: ReaderReadingOrder
     private let requestedStripCount: Int
     private let paperColor: UIColor
+    private let cornerPaperColor: UIColor
     private var currentImage: CGImage?
     private var targetImage: CGImage?
     private var strips: [PreparedStrip] = []
     private var backStrips: [PreparedStrip] = []
-    private var progress: CGFloat = 0
+    /// 当前已请求绘制的进度，包内只读，用于逐帧验证播放完整性。
+    private(set) var progress: CGFloat = 0
+    private(set) var cornerDrag: PaperCornerDrag?
+    private let cornerDriven: Bool
+    private var metalRenderer: PaperCornerMetalRenderer?
+    private var metalView: PaperCornerMetalView?
+    var usesMetalCornerRendering: Bool { metalRenderer?.isActive == true }
+    var metalSubmittedFrameCount: Int { metalRenderer?.submittedFrameCount ?? 0 }
+    var nativeCornerSubmittedFrameCount: Int { metalView?.submittedFrameCount ?? 0 }
+    /// 最后成功提交到原生 GPU 的纸面；没有屏幕提交时为 nil，离屏验收仍使用逻辑触点。
+    var submittedCornerDrag: PaperCornerDrag? { metalView?.submittedDrag }
+    /// 只有挂在窗口上的原生 Metal 触点纸面需要等待提交；离屏与软件路径保持原驱动。
+    var hasLiveNativeCornerPresentation: Bool { metalView?.window != nil && usesMetalCornerRendering }
+    /// 从最后已提交姿态继续；首帧还未提交时使用原生追随的起点，避免快速松手跳到逻辑终点。
+    var cornerReleaseStart: PaperCornerDrag? {
+        guard hasLiveNativeCornerPresentation else { return cornerDrag }
+        return metalView?.releaseStartDrag ?? cornerDrag
+    }
+    /// 原生纸面是否已经不会再提交新帧。
+    var nativeFramesExhausted: Bool { metalView?.framesExhausted ?? true }
+    private(set) var softwareCornerDrawCount = 0
+    /// 本次是否复用了传入的当前页位图（未重新抓取）。
+    private(set) var didReuseCurrentSnapshot = false
+    /// 本次抓取的目标页位图；下一笔翻页可用作当前页缓存。
+    var targetSnapshot: CGImage? { targetImage }
+    var targetTextureSnapshot: PaperCornerMetalRenderer.TextureSnapshot? { metalRenderer?.targetPageSnapshot }
+    var textureUploadCount: Int { metalRenderer?.textureUploadCount ?? 0 }
+    var metalLastTiming: PaperCornerMetalRenderer.Timing? { metalRenderer?.lastTiming }
+    var metalPresentationTimes: [TimeInterval] { metalRenderer?.presentedTimes ?? [] }
+    var metalFrameCPUTimes: [TimeInterval] { metalRenderer?.frameCPUTimes ?? [] }
+    var metalDiagnosticSubmissionCount: Int { metalRenderer?.diagnosticSubmissionCount ?? 0 }
+    var metalPresentationCount: Int { metalRenderer?.presentedFrameCount ?? 0 }
+    func collectMetalPresentationMetrics() { metalRenderer?.collectsPresentationMetrics = true }
+    func setMetalPresentationMetricsEnabled(_ enabled: Bool) { metalRenderer?.collectsPresentationMetrics = enabled }
+    var nativeRequestedFramesPerSecond: Int? { metalView?.requestedFramesPerSecond }
+    /// 原生收尾与 Metal 提交共享一个刷新时钟；返回 false 时调用方保留旧驱动。
+    @discardableResult
+    func driveNativeRelease(_ advance: @escaping (TimeInterval) -> Void) -> Bool {
+        guard hasLiveNativeCornerPresentation, let metalView else { return false }
+        metalView.beforeRender = advance
+        return true
+    }
+    var isNativeReleaseClockRunning: Bool { metalView?.drivesNativeRelease ?? false }
+
+    /// 目标页已显示的占比；原生窗口采用最后提交姿态，首帧未提交时不推断隐形进度。
+    /// 只用于单页触点 curl 的松手判定；双页与非触点路径保持原来的完成策略。
+    func visibleTargetFraction(for input: PaperCornerDrag) -> CGFloat? {
+        guard effect == .curl, spine != .center, hasResources else { return nil }
+        let shown: PaperCornerDrag
+        if hasLiveNativeCornerPresentation {
+            guard let submittedCornerDrag else { return nil }
+            shown = submittedCornerDrag
+        } else { shown = input }
+        guard let material = shown.foldingPresentation(direction: direction, size: bounds.size, spread: false),
+              let moving = PaperCornerCurlGeometry.visiblePaperFraction(for: material, stripCount: requestedStripCount) else { return nil }
+        return direction == .next ? 1 - moving : moving
+    }
+
 
     /// 当前持有的两张原始快照的实际像素总数；释放后为零。
     private(set) var snapshotPixelCount = 0
     var hasResources: Bool {
-        currentImage != nil && targetImage != nil && !strips.isEmpty &&
-            (spine != .center || backStrips.count == strips.count)
+        currentImage != nil && targetImage != nil && (cornerDriven || (!strips.isEmpty &&
+            (spine != .center || backStrips.count == strips.count)))
     }
     /// 实际材料条数；中央双页每条另有对应的真实背面，不重复计数。
-    var stripCount: Int { strips.count }
+    var stripCount: Int { hasResources && cornerDriven ? requestedStripCount : strips.count }
 
     /// - Parameters:
     ///   - currentView: 已加载、布局且可见的当前页面；中央书脊时包含两页。
@@ -46,7 +104,9 @@ final class PaperTransitionView: UIView {
     init(currentView: UIView, targetView: UIView, effect: PageTurnEffect,
          direction: PageTurnDirection, spine: PageSpinePlacement,
          options: PaperRenderingOptions, axis: PageTurnAxis = .horizontal,
-         readingOrder: ReaderReadingOrder = .leftToRight) throws {
+         readingOrder: ReaderReadingOrder = .leftToRight, cornerDriven: Bool = false,
+         cachedCurrent: CGImage? = nil,
+         cachedCurrentTexture: PaperCornerMetalRenderer.TextureSnapshot? = nil) throws {
         try options.validate()
         guard effect == .curl || effect == .arch else { throw PageTurnError.unsupportedPresentation }
         let size = currentView.bounds.size
@@ -66,13 +126,26 @@ final class PaperTransitionView: UIView {
                 pixelHeight: axis == .vertical ? pixels / 2 * 2 : plan.pixelHeight)
         }
 
-        let current = try Self.capture(currentView, plan: plan)
+        // 上一笔的目标页就是这一笔的当前页：尺寸与预算一致时复用位图，省掉一半抓取开销。
+        // 缓存位图按归一化 UV 采样，像素尺寸不必与本次预算完全一致；只要求画布比例一致，
+        // 否则会把上一页的图按错误比例铺满。尺寸变化由调用方以视图 bounds 相等为前提。
+        let reused = cachedCurrent.flatMap { image -> CGImage? in
+            guard image.width > 0, image.height > 0, plan.pixelHeight > 0 else { return nil }
+            let cachedAspect = CGFloat(image.width) / CGFloat(image.height)
+            let planAspect = CGFloat(plan.pixelWidth) / CGFloat(plan.pixelHeight)
+            return abs(cachedAspect - planAspect) < 0.01 ? image : nil
+        }
+        didReuseCurrentSnapshot = reused != nil
+        let current = try reused ?? Self.capture(currentView, plan: plan)
         let target = try Self.capture(targetView, plan: plan)
         let moving = direction == .next ? current : target
         let landing = direction == .next ? target : current
         let prepared: [PreparedStrip]
         let preparedBack: [PreparedStrip]
-        if spine == .center {
+        if cornerDriven {
+            // GPU 直接采样两张完整纹理，无需为本次触点翻页预裁 128 份 CGImage。
+            prepared = []; preparedBack = []
+        } else if spine == .center {
             let minimum = PaperSpreadGeometry.frontIsMinimum(axis: axis, readingOrder: readingOrder)
             prepared = try Self.prepareStrips(moving, count: options.stripCount, axis: axis, minimumHalf: minimum)
             preparedBack = try Self.prepareStrips(landing, count: options.stripCount, axis: axis, minimumHalf: !minimum)
@@ -81,12 +154,14 @@ final class PaperTransitionView: UIView {
             preparedBack = []
         }
         self.effect = effect
+        self.cornerDriven = cornerDriven
         self.direction = direction
         self.spine = spine == .automatic ? .minimum : spine
         self.axis = axis
         self.readingOrder = readingOrder
         self.requestedStripCount = options.stripCount
         self.paperColor = Self.paperColor(for: direction == .next ? currentView : targetView)
+        self.cornerPaperColor = Self.paperColor(for: direction == .next ? currentView : targetView)
         self.currentImage = current
         self.targetImage = target
         self.strips = prepared
@@ -100,28 +175,52 @@ final class PaperTransitionView: UIView {
         clipsToBounds = true
         backgroundColor = Self.paperColor(for: currentView)
         overrideUserInterfaceStyle = currentView.traitCollection.userInterfaceStyle
+        if cornerDriven, PaperCornerMetalRenderer.isSupported {
+            metalRenderer = try PaperCornerMetalRenderer(current: current, target: target, size: size,
+                axis: axis, spread: spine == .center, strips: options.stripCount, paperColor: cornerPaperColor,
+                direction: direction, cachedCurrentTexture: reused == nil ? nil : cachedCurrentTexture)
+        }
     }
 
     /// - Parameter coder: 不支持归档构造。
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("请使用页面快照初始化方法") }
 
-    /// - Parameter progress: 逻辑进度；有限值钳制到 0...1，非有限值保持上一帧。
+    /// - Parameters: progress: 逻辑进度；cornerDrag: 二维姿态；followsTouch: 原生拖动呈现轻缓，收尾或离屏参考直接对齐。
     /// - Returns: 无返回值。
-    func update(progress: CGFloat) {
+    func update(progress: CGFloat, cornerDrag: PaperCornerDrag? = nil, followsTouch: Bool = false) {
         guard progress.isFinite else { return }
         self.progress = min(1, max(0, progress))
-        setNeedsDisplay()
+        self.cornerDrag = cornerDrag
+        if let renderer = metalRenderer, let cornerDrag {
+            let display: PaperCornerMetalView
+            if let metalView { display = metalView }
+            else {
+                display = PaperCornerMetalView(renderer: renderer, frame: bounds)
+                display.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                addSubview(display); metalView = display
+            }
+            display.update(cornerDrag, followsTouch: followsTouch)
+        } else { setNeedsDisplay() }
+    }
+
+    /// - Parameter scale: 验收输出倍率；返回实际 GPU 绘制结果。原生手势从不调用读回或等待。
+    func cornerGPUImage(scale: CGFloat = 1) throws -> UIImage? {
+        guard let metalRenderer, let cornerDrag else { return nil }
+        return try metalRenderer.snapshot(cornerDrag, scale: scale)
     }
 
     /// 幂等释放原图、正反面条带及已显示的图层位图，不持有或修改宿主页面。
     /// - Returns: 无返回值。
     func invalidateResources() {
+        metalView?.invalidate(); metalView?.removeFromSuperview(); metalView = nil
+        metalRenderer?.invalidate(); metalRenderer = nil
         currentImage = nil
         targetImage = nil
         strips.removeAll(keepingCapacity: false)
         backStrips.removeAll(keepingCapacity: false)
         snapshotPixelCount = 0
+        cornerDrag = nil
         layer.contents = nil
         setNeedsDisplay()
     }
@@ -139,6 +238,14 @@ final class PaperTransitionView: UIView {
         context.translateBy(x: bounds.minX, y: bounds.minY)
         context.clip(to: page)
         context.interpolationQuality = .high
+        if metalView != nil {
+            // Metal 子层负责动态纸面；父层仅保留一次静态底图，避免同时运行 CPU 逐帧绘制。
+            Self.drawImage(current, in: page, context: context); return
+        }
+        if effect == .curl, let cornerDrag {
+            drawCornerCurl(cornerDrag, current: current, target: target, page: page, context: context)
+            return
+        }
         if progress == 0 {
             Self.drawImage(current, in: page, context: context)
             return
@@ -185,6 +292,105 @@ final class PaperTransitionView: UIView {
 }
 
 private extension PaperTransitionView {
+    /// - Parameters: points: 纸面多边形。返回闭合路径，空数组生成空路径。
+    static func polygonPath(_ points: [CGPoint]) -> CGPath {
+        let path = CGMutablePath()
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        for point in points.dropFirst() { path.addLine(to: point) }
+        path.closeSubpath()
+        return path
+    }
+
+    /// 二维折痕只投影原图，不在拖动中重拍页面或裁切新位图。
+    /// - Parameters: drag: 抓取纸角；current: 当前整图；target: 目标整图；page: 画布；context: 绘制上下文。无返回值。
+    func drawCornerCurl(_ input: PaperCornerDrag, current: CGImage, target: CGImage, page: CGRect, context: CGContext) {
+        softwareCornerDrawCount += 1
+        guard let drag = input.foldingPresentation(direction: direction, size: page.size, spread: spine == .center) else { return }
+        let front = direction == .next ? current : target
+        let under = direction == .next ? target : current
+        if drag.translation == .zero { Self.drawImage(front, in: page, context: context); return }
+        let crossOffset = axis == .horizontal ? drag.translation.y : drag.translation.x
+        if drag.progress == 1, crossOffset == 0 { Self.drawImage(under, in: page, context: context); return }
+        let patches = PaperCornerCurlGeometry.patches(for: drag, stripCount: requestedStripCount)
+        if spine == .center {
+            Self.drawImage(front, in: page, context: context)
+            context.saveGState(); context.clip(to: drag.page)
+            Self.drawImage(under, in: page, context: context); context.restoreGState()
+        } else { Self.drawImage(under, in: page, context: context) }
+        var shadowPlaced = false
+        for patch in patches {
+            if patch.back, !shadowPlaced {
+                drawCornerContactShadow(patches, drag: drag, context: context)
+                shadowPlaced = true
+            }
+            context.saveGState()
+            context.setShouldAntialias(false)
+            context.concatenate(patch.transform)
+            context.addPath(Self.polygonPath(patch.source)); context.clip()
+            if patch.back, spine == .center {
+                // 目标另一半页先反向映射到材料正面；最终翻到对面时正文恢复正向。
+                context.saveGState()
+                context.concatenate(axis == .horizontal
+                    ? CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: page.width, ty: 0)
+                    : CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: page.height))
+                Self.drawImage(under, in: page, context: context); context.restoreGState()
+            } else if patch.back {
+                // 同一底色上保留移动纸页 52% 透印，纸背可读整行正文；反折由材料变换完成，弧面和平面完全一致。
+                context.setFillColor(cornerPaperColor.cgColor); context.fill(page)
+                context.saveGState(); context.setAlpha(0.52)
+                Self.drawImage(front, in: page, context: context); context.restoreGState()
+            } else { Self.drawImage(front, in: page, context: context) }
+            if patch.shade > 0 {
+                context.setFillColor(UIColor.black.withAlphaComponent(patch.shade).cgColor); context.fill(page)
+            }
+            context.restoreGState()
+        }
+    }
+
+    /// - Parameters: patches: 当前有序纸面；drag: 抓取状态；context: 软件参考上下文。
+    /// - Returns: 无返回值；仅在正面画好后、纸背开始前绘制一次接触阴影。
+    func drawCornerContactShadow(_ patches: [PaperCornerPatch], drag: PaperCornerDrag, context: CGContext) {
+        let mesh = PaperCornerShadowGeometry.vertices(for: drag, patches: patches)
+        for index in stride(from: 0, to: mesh.count, by: 3) {
+            guard index + 2 < mesh.count else { continue }
+            let a = mesh[index], b = mesh[index + 1], c = mesh[index + 2]
+            let ux = b.point.x - a.point.x, uy = b.point.y - a.point.y
+            let vx = c.point.x - a.point.x, vy = c.point.y - a.point.y
+            let determinant = ux * vy - vx * uy
+            guard abs(determinant) > 1e-8 else { continue }
+            let da = b.opacity - a.opacity, db = c.opacity - a.opacity
+            let gx = (da * vy - db * uy) / determinant
+            let gy = (ux * db - vx * da) / determinant
+            let magnitude = hypot(gx, gy)
+            context.saveGState()
+            context.setShouldAntialias(false)
+            context.addPath(Self.polygonPath([a.point, b.point, c.point]))
+            if magnitude < 1e-8 {
+                context.setFillColor(UIColor.black.withAlphaComponent(a.opacity).cgColor)
+                context.fillPath()
+            } else {
+                context.clip()
+                let normal = CGPoint(x: gx / magnitude, y: gy / magnitude)
+                let positions = [a.point, b.point, c.point].map { normal.x * $0.x + normal.y * $0.y }
+                if let lower = positions.min(), let upper = positions.max(), upper > lower {
+                    let constant = a.opacity - gx * a.point.x - gy * a.point.y
+                    let lowerAlpha = min(1, max(0, magnitude * lower + constant))
+                    let upperAlpha = min(1, max(0, magnitude * upper + constant))
+                    let colors = [UIColor.black.withAlphaComponent(lowerAlpha).cgColor,
+                                  UIColor.black.withAlphaComponent(upperAlpha).cgColor] as CFArray
+                    if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                        context.drawLinearGradient(gradient,
+                            start: CGPoint(x: normal.x * lower, y: normal.y * lower),
+                            end: CGPoint(x: normal.x * upper, y: normal.y * upper),
+                            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+                    }
+                }
+            }
+            context.restoreGState()
+        }
+    }
+
     /// - Parameters: current: 当前原图；target: 目标原图；page: 零原点画布；layout: 轴向映射；context: 上下文。
     /// - Returns: 无返回值；上一页交换两张原图后复用完全相同的曲面与采样。
     func drawSpread(current: CGImage, target: CGImage, page: CGRect,

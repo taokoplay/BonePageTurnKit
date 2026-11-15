@@ -10,6 +10,10 @@ public final class ReaderSurfaceViewController: UIViewController {
     public private(set) var layout: ReaderSurfaceLayout?
     public private(set) var layoutRevision: UInt64 = 0
     public private(set) var isActive = true
+    /// 退出暂停或最终提交尚未完成；手动失效及最终完成后为 false。
+    public var isExitInProgress: Bool { isActive && (container.isExitInProgress || finishingExitToken != nil) }
+    /// 底层最终位置提交尝试、renderer 失效及外壳清理全部完成后通知一次；手动 invalidate 不通知。
+    public var onExitFinalized: ((ReaderExitToken) -> Void)?
     public var pagedReader: PagedReaderViewController? { container.pagedReader }
     public var continuousReader: ContinuousReaderViewController? { container.continuousReader }
     public var currentBodyController: UIViewController? { currentPage?.bodyPage.controller }
@@ -36,6 +40,8 @@ public final class ReaderSurfaceViewController: UIViewController {
     private var installedContext = ReaderSurfaceContext()
     private var lastPublishedStatus: ReaderStatus?
     private var operating = false
+    private var cancellingExit = false
+    private var finishingExitToken: ReaderExitToken?
     private var applyingLayout = false
     private var deliveringStatus = false
     private var layoutScheduled = false
@@ -254,15 +260,66 @@ public final class ReaderSurfaceViewController: UIViewController {
         } catch { wrapped.detachContents(); throw error }
     }
 
-    /// - Parameters: suspended: 是否暂停；reason: 独立暂停原因，不覆盖宿主其他原因。
-    public func setSuspended(_ suspended: Bool, reason: String) { container.setSuspended(suspended, reason: reason) }
+    /// - Parameters: suspended: 是否暂停；reason: 独立暂停原因，不覆盖宿主其他原因；失效后忽略。
+    public func setSuspended(_ suspended: Bool, reason: String) {
+        guard isActive else { return }
+        container.setSuspended(suspended, reason: reason)
+    }
 
-    /// 失效所有 renderer 与待交付布局通知；已有异步票据仍按底层协议收到唯一终态。
+    /// 开始可取消的退出，复用内部容器的暂停原因及令牌，不销毁 renderer。
+    /// - Returns: 本外壳当前退出凭据；重复开始（包括等待最终提交时）返回同一令牌。
+    /// - Throws: 外壳失效时为 inactive；取消退出的同步回调中为 interactionInProgress。
+    public func beginExit() throws -> ReaderExitToken {
+        guard isActive else { throw ReaderSurfaceError.inactive }
+        guard !cancellingExit else { throw ReaderSurfaceError.interactionInProgress }
+        if let finishingExitToken { return finishingExitToken }
+        let token = container.beginExit()
+        // 暂停可能同步通知宿主；回调中的 invalidate 优先于本次开始。
+        guard isActive else { throw ReaderSurfaceError.inactive }
+        return token
+    }
+
+    /// - Parameter token: 本次退出凭据；只解除退出自己的暂停原因，保留其他原因及主动暂停意图。
+    /// - Returns: 取消被接受为 true；失效、旧／跨容器令牌、取消重入或已确认退出时为 false。
+    @discardableResult
+    public func cancelExit(_ token: ReaderExitToken) -> Bool {
+        guard isActive, !cancellingExit, finishingExitToken == nil else { return false }
+        // 底层先清令牌再恢复交互；这段同步通知中不允许创建或结束另一笔退出。
+        cancellingExit = true
+        defer { cancellingExit = false; scheduleLayoutNotification() }
+        return container.cancelExit(token)
+    }
+
+    /// 确认退出；连续模式先尝试提交有效稳定位置，在 UI 通知中调用时可能异步完成。
+    /// - Parameter token: 本次退出凭据。
+    /// - Returns: 请求被接受为 true；此时不保证已失效，以 onExitFinalized 作为实际完成边界。
+    @discardableResult
+    public func finishExit(_ token: ReaderExitToken) -> Bool {
+        guard isActive, !cancellingExit, finishingExitToken == nil else { return false }
+        finishingExitToken = token
+        // 仅等待确认退出时保留外壳（进而保留内部容器）；完成或手动失效都会解除此引用。
+        container.onExitFinalized = { [self] completedToken in
+            guard isActive, finishingExitToken == completedToken else { return }
+            let handler = onExitFinalized
+            invalidate()
+            handler?(completedToken)
+        }
+        if container.finishExit(token) { return true }
+        finishingExitToken = nil
+        container.onExitFinalized = nil
+        return false
+    }
+
+    /// 立即失效所有 renderer 与待交付布局通知，覆盖已排队的退出完成，不发出 onExitFinalized。
+    /// 已有异步票据仍按底层协议收到唯一终态；本方法不负责最终位置提交。
     public func invalidate() {
         guard isActive else { return }
         isActive = false
         epoch = UUID()
         layoutScheduled = false
+        finishingExitToken = nil
+        container.onExitFinalized = nil
+        onExitFinalized = nil
         container.invalidate()
         onLayoutChange = nil; onLayoutError = nil; pageProvider = nil
         onTransition = nil; onReadingStatus = nil; onUnavailable = nil
@@ -276,10 +333,12 @@ private extension ReaderSurfaceViewController {
         return root.environment ?? ReaderViewportEnvironment.capture(from: root)
     }
 
-    /// - Throws: 安装、同步状态通知或布局回调中不能嵌套修改视图归属。
+    /// - Throws: 退出、安装、同步状态通知或布局回调中不能嵌套修改展示及配置。
     func checkMutation() throws {
         guard isActive else { throw ReaderSurfaceError.inactive }
-        guard !operating, !applyingLayout, !deliveringStatus else { throw ReaderSurfaceError.interactionInProgress }
+        guard !isExitInProgress, !cancellingExit, !operating, !applyingLayout, !deliveringStatus else {
+            throw ReaderSurfaceError.interactionInProgress
+        }
     }
 
     /// - Parameters: environment: 外层实际环境；metrics: 度量；policy: 可读区域策略。
@@ -352,14 +411,14 @@ private extension ReaderSurfaceViewController {
 
     /// 合并到最新稳定几何，允许宿主在通知中按正文尺寸创建页面；不会每帧发出动画位置。
     func scheduleLayoutNotification() {
-        guard isActive, failedEnvironment == nil, layout != nil, layout != lastPublishedLayout,
+        guard isActive, !isExitInProgress, !cancellingExit, failedEnvironment == nil, layout != nil, layout != lastPublishedLayout,
               !layoutScheduled else { return }
         layoutScheduled = true
         let token = epoch
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isActive, self.epoch == token else { return }
             self.layoutScheduled = false
-            guard !self.operating, !self.applyingLayout, self.failedEnvironment == nil,
+            guard !self.isExitInProgress, !self.cancellingExit, !self.operating, !self.applyingLayout, self.failedEnvironment == nil,
                   let current = self.layout, current != self.lastPublishedLayout else { return }
             self.lastPublishedLayout = current
             self.onLayoutChange?(current)
