@@ -178,7 +178,8 @@ final class PaperTransitionView: UIView {
         if cornerDriven, PaperCornerMetalRenderer.isSupported {
             metalRenderer = try PaperCornerMetalRenderer(current: current, target: target, size: size,
                 axis: axis, spread: spine == .center, strips: options.stripCount, paperColor: cornerPaperColor,
-                direction: direction, cachedCurrentTexture: reused == nil ? nil : cachedCurrentTexture)
+                direction: direction, cachedCurrentTexture: reused == nil ? nil : cachedCurrentTexture,
+                readingOrder: readingOrder, effect: effect)
         }
     }
 
@@ -242,6 +243,10 @@ final class PaperTransitionView: UIView {
             // Metal 子层负责动态纸面；父层仅保留一次静态底图，避免同时运行 CPU 逐帧绘制。
             Self.drawImage(current, in: page, context: context); return
         }
+        if effect == .arch, let cornerDrag {
+            drawDirectionalArch(cornerDrag, current: current, target: target, page: page, context: context)
+            return
+        }
         if effect == .curl, let cornerDrag {
             drawCornerCurl(cornerDrag, current: current, target: target, page: page, context: context)
             return
@@ -302,6 +307,44 @@ private extension PaperTransitionView {
         return path
     }
 
+    /// 软件参考与 GPU 共用拱页三角形；稳定端点始终直接绘制完整、正向的当前页或目标页。
+    func drawDirectionalArch(_ drag: PaperCornerDrag, current: CGImage, target: CGImage,
+                             page: CGRect, context: CGContext) {
+        softwareCornerDrawCount += 1
+        if drag.gestureProgress == 0 { Self.drawImage(current, in: page, context: context); return }
+        if drag.gestureProgress == 1, drag.archContactStrength == 0 { Self.drawImage(target, in: page, context: context); return }
+        // 与 Metal 的线性纹理采样保持一致，避免逐三角形的高阶重采样在字形边缘产生不同晕圈。
+        context.interpolationQuality = .low
+        let front = direction == .next ? current : target, under = direction == .next ? target : current
+        let sourcePage = PaperArchGeometry.materialPage(for: drag, direction: direction)
+        if spine == .center {
+            Self.drawImage(front, in: page, context: context)
+            context.saveGState(); context.clip(to: sourcePage)
+            Self.drawImage(under, in: page, context: context); context.restoreGState()
+        } else { Self.drawImage(under, in: page, context: context) }
+        let mesh = PaperArchGeometry.mesh(for: drag, direction: direction, stripCount: requestedStripCount, readingOrder: readingOrder)
+        drawCornerContactShadow([], drag: drag, context: context, vertices: mesh.shadow)
+        for (patchIndex, patch) in mesh.patches.enumerated() {
+            context.saveGState(); context.setShouldAntialias(false)
+            context.concatenate(patch.transform)
+            context.addPath(Self.polygonPath(patch.source)); context.clip()
+            if patch.back, spine == .center {
+                context.saveGState()
+                context.concatenate(axis == .horizontal
+                    ? CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: page.width, ty: 0)
+                    : CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: page.height))
+                Self.drawImage(under, in: page, context: context); context.restoreGState()
+            } else if patch.back {
+                context.setFillColor(cornerPaperColor.cgColor); context.fill(page)
+                context.saveGState(); context.setAlpha(0.52)
+                Self.drawImage(front, in: page, context: context); context.restoreGState()
+            } else { Self.drawImage(front, in: page, context: context) }
+            let shades = zip(patch.source, mesh.shades[patchIndex]).map { PaperCornerShadowVertex(point: $0.0, opacity: $0.1) }
+            drawCornerContactShadow([], drag: drag, context: context, vertices: shades)
+            context.restoreGState()
+        }
+    }
+
     /// 二维折痕只投影原图，不在拖动中重拍页面或裁切新位图。
     /// - Parameters: drag: 抓取纸角；current: 当前整图；target: 目标整图；page: 画布；context: 绘制上下文。无返回值。
     func drawCornerCurl(_ input: PaperCornerDrag, current: CGImage, target: CGImage, page: CGRect, context: CGContext) {
@@ -350,8 +393,9 @@ private extension PaperTransitionView {
 
     /// - Parameters: patches: 当前有序纸面；drag: 抓取状态；context: 软件参考上下文。
     /// - Returns: 无返回值；仅在正面画好后、纸背开始前绘制一次接触阴影。
-    func drawCornerContactShadow(_ patches: [PaperCornerPatch], drag: PaperCornerDrag, context: CGContext) {
-        let mesh = PaperCornerShadowGeometry.vertices(for: drag, patches: patches)
+    func drawCornerContactShadow(_ patches: [PaperCornerPatch], drag: PaperCornerDrag, context: CGContext,
+                                 vertices: [PaperCornerShadowVertex]? = nil) {
+        let mesh = vertices ?? PaperCornerShadowGeometry.vertices(for: drag, patches: patches)
         for index in stride(from: 0, to: mesh.count, by: 3) {
             guard index + 2 < mesh.count else { continue }
             let a = mesh[index], b = mesh[index + 1], c = mesh[index + 2]

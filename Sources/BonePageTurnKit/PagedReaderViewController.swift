@@ -279,7 +279,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        if paperEffect == .curl { PaperCornerMetalRenderer.prewarm() }
+        if paperEffect != nil { PaperCornerMetalRenderer.prewarm() }
         view.clipsToBounds = true
         view.backgroundColor = .systemBackground
         pan.delegate = self
@@ -423,11 +423,11 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
 
 
     /// - Parameters: direction: 内容方向；animated: 是否播放配置动画。
-    /// - Returns: 是否实际开始；动画 curl 点击使用原生卷页纸面，其他效果和非动画路径沿用原处理。
+    /// - Returns: 是否实际开始；纸张点击使用对应原生曲面，非动画路径沿用原处理。
     private func startDiscreteTurn(_ direction: PageTurnDirection, animated: Bool) throws -> Bool {
         let capturesPaper = animated && !UIAccessibility.isReduceMotionEnabled
         let cornerPoint: CGPoint?
-        if capturesPaper, paperEffect == .curl {
+        if capturesPaper, paperEffect != nil {
             loadViewIfNeeded()
             let sign = direction == .next ? forwardSign : -forwardSign
             cornerPoint = axis == .horizontal
@@ -441,9 +441,11 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             let size = view.bounds.size
             let spread = configuration.layout == .spread
             guard let folding = seed.foldingPresentation(direction: direction, size: size, spread: spread),
-                  let start = folding.interactivePresentation(direction: direction, size: size, spread: spread) else {
+                  let initial = folding.interactivePresentation(direction: direction, size: size, spread: spread) else {
                 cancelTransition(); throw PageTurnError.invalidInteractionPoint
             }
+            var start = initial
+            if start.effect == .arch { start.archContactStrength = 0 }
             pending?.cornerDrag = start
             paperView?.update(progress: 0, cornerDrag: start, followsTouch: false)
             guard isActive, pending?.transition.id == transitionID else { return false }
@@ -570,9 +572,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         return started
     }
 
-    /// 从 reader.view 内指定点开始二维卷页；角落起拖锁定起角，中段起拖随横跨轴位移调整折向。
-    /// - Parameters: direction: 内容逻辑方向；point: 页内按下位置，角落锁角，中段保留抓取高度并随横跨轴位移调整折向。
-    /// - Returns: 是否取得邻页并开始；非 curl 效果、非法坐标或交互占用会抛错。
+    /// 从 reader.view 指定点开始二维纸张；curl 按角落／中段折起，arch 保留真实抓取点并随斜向位移倾斜。
+    /// - Parameters: direction: 内容逻辑方向；point: 页内按下位置，包含当前 bounds 原点。
+    /// - Returns: 是否取得邻页并开始；非纸张效果、非法坐标或交互占用会抛错。
     @discardableResult
     public func beginInteractiveTurn(_ direction: PageTurnDirection, at point: CGPoint) throws -> Bool {
         try beginInteractiveTurn(direction, at: point, prefersFlatTurn: false)
@@ -582,7 +584,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     private func beginInteractiveTurn(_ direction: PageTurnDirection, at point: CGPoint,
                                       prefersFlatTurn: Bool) throws -> Bool {
         guard isActive else { throw PageTurnError.inactive }
-        guard paperEffect == .curl else { throw PageTurnError.unsupportedPresentation }
+        guard paperEffect != nil else { throw PageTurnError.unsupportedPresentation }
         loadViewIfNeeded()
         guard makeCornerDrag(direction: direction, at: point, prefersFlatTurn: prefersFlatTurn) != nil else { throw PageTurnError.invalidInteractionPoint }
         try validateTurnStart()
@@ -601,8 +603,15 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                                 prefersFlatTurn: Bool = false) -> PaperCornerDrag? {
         let local = CGPoint(x: point.x - view.bounds.minX, y: point.y - view.bounds.minY)
         var drag = PaperCornerDrag(size: view.bounds.size, axis: axis, spread: configuration.layout == .spread,
-            inwardSign: direction == .next ? forwardSign : -forwardSign, origin: local)
-        drag?.prefersFlatTurn = prefersFlatTurn
+            inwardSign: direction == .next ? forwardSign : -forwardSign, origin: local, effect: paperEffect ?? .curl)
+        if paperEffect == .arch, let candidate = drag {
+            let hinge = axis == .horizontal
+                ? (candidate.inwardSign < 0 ? candidate.page.minX : candidate.page.maxX)
+                : (candidate.inwardSign < 0 ? candidate.page.minY : candidate.page.maxY)
+            let distance = ((axis == .horizontal ? local.x : local.y) - hinge) * -candidate.inwardSign
+            guard distance > 1e-7, distance <= candidate.length else { return nil }
+        }
+        drag?.prefersFlatTurn = paperEffect == .curl && prefersFlatTurn
         return drag
     }
 
@@ -738,8 +747,15 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let progress = min(1, max(0, displacement / extent))
         pending?.progress = progress
         if var drag = pending?.cornerDrag {
-            drag.translation = axis == .horizontal ? CGPoint(x: drag.inwardSign * 2 * drag.length * progress, y: 0)
-                : CGPoint(x: 0, y: drag.inwardSign * 2 * drag.length * progress)
+            if drag.effect == .arch {
+                let point = axis == .horizontal
+                    ? CGPoint(x: drag.origin.x + drag.inwardSign * extent * progress, y: drag.origin.y)
+                    : CGPoint(x: drag.origin.x, y: drag.origin.y + drag.inwardSign * extent * progress)
+                if let moved = drag.moved(to: point) { drag = moved; pending?.progress = moved.gestureProgress }
+            } else {
+                drag.translation = axis == .horizontal ? CGPoint(x: drag.inwardSign * 2 * drag.length * progress, y: 0)
+                    : CGPoint(x: 0, y: drag.inwardSign * 2 * drag.length * progress)
+            }
             pending?.cornerDrag = drag
         }
         recordAnimationDiagnostic(.frame)
@@ -775,7 +791,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         if paperEffect != nil {
             // 抓取点过中线或目标页实际显露过半均可完成；静止按下和快速反甩仍取消。
             let reachesMidpoint = pending.cornerDrag.map { drag in
-                guard drag.gestureProgress > 0 else { return false }
+                guard drag.effect == .curl, drag.gestureProgress > 0 else { return false }
                 if drag.hasReachedCanvasMidpoint { return true }
                 // 仅容忍投影面积求和的浮点误差，不放宽可见半屏阈值。
                 return (paperView?.visibleTargetFraction(for: drag) ?? 0) + 1e-9 >= 0.5
@@ -876,7 +892,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let speed = pan.velocity(in: view)
         let primary = axis == .horizontal ? abs(speed.x) : abs(speed.y)
         let secondary = axis == .horizontal ? abs(speed.y) : abs(speed.x)
-        let acceptsDirection = paperEffect == .curl ? (primary > 0 || secondary > 0) : primary > secondary
+        let acceptsDirection = paperEffect != nil ? (primary > 0 || secondary > 0) : primary > secondary
         return acceptsDirection && (shouldBeginPan?(pan) ?? true)
     }
     /// - Parameters: gestureRecognizer: 待识别手势；otherGestureRecognizer: 需要优先裁决的手势。
@@ -919,7 +935,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             }
             panQueuedWhileTransitioning = false
             do {
-                if paperEffect == .curl {
+                if paperEffect != nil {
                     let location = pan.location(in: view)
                     let origin = CGPoint(x: min(view.bounds.maxX, max(view.bounds.minX, location.x - translation.x)),
                                          y: min(view.bounds.maxY, max(view.bounds.minY, location.y - translation.y)))
@@ -929,8 +945,11 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                     let atSide = primaryOrigin < extent * 0.25 || primaryOrigin > extent * 0.75
                     let atEnd = crossOrigin < crossExtent * 0.25 || crossOrigin > crossExtent * 0.75
                     let flat = PaperCornerDrag.isFlatGesture(translation: translation, velocity: speed, axis: axis)
-                    let motion = velocity == 0 ? position : velocity
-                    let physical = (!flat && atSide && atEnd) || motion == 0
+                    let motion: CGFloat
+                    if paperEffect == .arch, max(abs(translation.x), abs(translation.y)) >= 4 { motion = position }
+                    else { motion = velocity == 0 ? position : velocity }
+                    let usesCorner = paperEffect == .curl && !flat && atSide && atEnd
+                    let physical = usesCorner || motion == 0
                         ? (primaryOrigin < extent / 2 ? CGFloat(1) : -1) : motion
                     if try beginInteractiveTurn(physical * forwardSign > 0 ? .next : .previous,
                                                 at: origin, prefersFlatTurn: flat) {

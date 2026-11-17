@@ -286,6 +286,57 @@ final class FullScreenDemoUITests: XCTestCase {
         capture(app, "中部仿真-纵向左右斜拖")
     }
 
+    func testArchNativeDiagonalsFollowBothAxesAndCancel() {
+        let app = launch(); defer { app.terminate() }
+        var expected = 0
+        func drag(_ start: CGVector, _ end: CGVector, delta: Int) {
+            let canvas = app.otherElements["reader-paged"]
+            XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+            canvas.coordinate(withNormalizedOffset: start).press(forDuration: 0.05,
+                thenDragTo: canvas.coordinate(withNormalizedOffset: end), withVelocity: .slow, thenHoldForDuration: 0.25)
+            expected += delta
+            showMenu(app)
+            XCTAssertEqual(app.staticTexts["reader-position"].value as? String, String(expected))
+            app.buttons["reader-hide-menu"].tap()
+            wait { !app.buttons["reader-settings-button"].isHittable }
+        }
+        mode("arch", axis: "横向", app: app)
+        drag(CGVector(dx: 0.82, dy: 0.56), CGVector(dx: 0.22, dy: 0.35), delta: 1)
+        drag(CGVector(dx: 0.18, dy: 0.44), CGVector(dx: 0.78, dy: 0.65), delta: -1)
+        drag(CGVector(dx: 0.82, dy: 0.44), CGVector(dx: 0.22, dy: 0.65), delta: 1)
+        drag(CGVector(dx: 0.18, dy: 0.56), CGVector(dx: 0.78, dy: 0.35), delta: -1)
+        drag(CGVector(dx: 0.80, dy: 0.5), CGVector(dx: 0.76, dy: 0.53), delta: 0)
+        capture(app, "拱页-横向双向斜拖与短拖取消")
+        mode("arch", axis: "纵向", app: app)
+        drag(CGVector(dx: 0.5, dy: 0.82), CGVector(dx: 0.72, dy: 0.22), delta: 1)
+        drag(CGVector(dx: 0.5, dy: 0.18), CGVector(dx: 0.28, dy: 0.78), delta: -1)
+        drag(CGVector(dx: 0.5, dy: 0.82), CGVector(dx: 0.28, dy: 0.22), delta: 1)
+        drag(CGVector(dx: 0.5, dy: 0.18), CGVector(dx: 0.72, dy: 0.78), delta: -1)
+        capture(app, "拱页-纵向左右斜拖")
+    }
+
+    func testPreviousArchNativeUnfoldsAndShortPullCancels() {
+        let app = launch(); defer { app.terminate() }
+        mode("arch", axis: "横向", app: app)
+        var expected = 0
+        func drag(_ start: CGVector, _ end: CGVector, delta: Int) {
+            let canvas = app.otherElements["reader-paged"]
+            XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+            canvas.coordinate(withNormalizedOffset: start).press(forDuration: 0.05,
+                thenDragTo: canvas.coordinate(withNormalizedOffset: end), withVelocity: .slow, thenHoldForDuration: 0.3)
+            expected += delta
+            showMenu(app)
+            XCTAssertEqual(app.staticTexts["reader-position"].value as? String, String(expected))
+            app.buttons["reader-hide-menu"].tap()
+            wait { !app.buttons["reader-settings-button"].isHittable }
+        }
+        drag(CGVector(dx: 0.82, dy: 0.5), CGVector(dx: 0.22, dy: 0.5), delta: 1)
+        drag(CGVector(dx: 0.18, dy: 0.5), CGVector(dx: 0.28, dy: 0.51), delta: 0)
+        capture(app, "拱页-左到右短拖取消恢复当前页")
+        drag(CGVector(dx: 0.18, dy: 0.5), CGVector(dx: 0.78, dy: 0.5), delta: -1)
+        capture(app, "拱页-左到右展开上一页")
+    }
+
     /// 四角真实斜拖、短拖取消、纵向及 RTL 都通过同一公开翻页事务。
     func testCornerCurlNativeCornersCancelAndReadingOrder() {
         let app = launch(); defer { app.terminate() }

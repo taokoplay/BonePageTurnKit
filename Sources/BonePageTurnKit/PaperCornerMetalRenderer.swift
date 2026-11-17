@@ -85,13 +85,14 @@ final class PaperCornerMetalRenderer {
     private let size: CGSize
     private let axis: PageTurnAxis
     private let direction: PageTurnDirection
+    private let readingOrder: ReaderReadingOrder
     private let spread: Bool
     private let strips: Int
     private let color: SIMD4<Float>
     private var slots: [Slot] = []
     private var nextSlot = 0
     private var vertices: [Vertex] = []
-    private let maximumVertices = 8_192
+    private let maximumVertices: Int
     private(set) var lastTiming: Timing?
     private(set) var submittedFrameCount = 0
     var collectsPresentationMetrics = false {
@@ -120,9 +121,12 @@ final class PaperCornerMetalRenderer {
     /// - Throws: 本机 Metal 资源创建失败；不创建另一种翻页效果。
     init(current: CGImage, target: CGImage, size: CGSize, axis: PageTurnAxis,
          spread: Bool, strips: Int, paperColor: UIColor, direction: PageTurnDirection = .next,
-         cachedCurrentTexture: TextureSnapshot? = nil) throws {
+         cachedCurrentTexture: TextureSnapshot? = nil, readingOrder: ReaderReadingOrder = .leftToRight,
+         effect: PageTurnEffect = .curl) throws {
         context = try PaperCornerMetalContext.shared.get()
         self.size = size; self.axis = axis; self.direction = direction; self.spread = spread; self.strips = strips
+        self.readingOrder = readingOrder
+        maximumVertices = effect == .arch ? 32_768 : 8_192
         let rgb = paperColor.cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil)
         let components = rgb?.components ?? [1, 1, 1, 1]
         color = components.count >= 3 ? SIMD4(Float(components[0]), Float(components[1]), Float(components[2]), 1)
@@ -141,9 +145,10 @@ final class PaperCornerMetalRenderer {
         let targetPage = TextureSnapshot(image: target, texture: try context.loader.newTexture(cgImage: target, options: options))
         textureUploadCount += 1
         targetPageSnapshot = targetPage
-        // 纹理 0 仍是移动纸，纹理 1 仍是底页；缓存只减少上传，不改变回翻角色。
-        self.current = direction == .next ? currentPage.texture : targetPage.texture
-        self.target = direction == .next ? targetPage.texture : currentPage.texture
+        // 回翻的运动纸张统一取上一页，底页仍为当前页；正翻角色不变。
+        let swapsPages = direction == .previous
+        self.current = swapsPages ? targetPage.texture : currentPage.texture
+        self.target = swapsPages ? currentPage.texture : targetPage.texture
         for _ in 0..<3 {
             guard let buffer = context.device.makeBuffer(length: maximumVertices * MemoryLayout<Vertex>.stride, options: .storageModeShared) else {
                 throw PaperCornerMetalContext.Failure.buffer
@@ -287,6 +292,7 @@ final class PaperCornerMetalRenderer {
     private func buildVertices(_ drag: PaperCornerDrag) {
         vertices.removeAll(keepingCapacity: true)
         let page = CGRect(origin: .zero, size: size)
+        if drag.effect == .arch { buildArchVertices(drag, page: page); return }
         if drag.translation == .zero { rectangle(page, material: 0); return }
         let cross = axis == .horizontal ? drag.translation.y : drag.translation.x
         if drag.progress == 1, cross == 0 { rectangle(page, material: 1); return }
@@ -308,6 +314,29 @@ final class PaperCornerMetalRenderer {
                     }
                     vertex(source.applying(patch.transform), uv: uvPoint, material: material, shade: Float(patch.shade))
                 }
+            }
+        }
+    }
+
+    /// 拱页共用同一次约束求解的纸面与高度投影，不在逐帧路径重复建立几何。
+    private func buildArchVertices(_ drag: PaperCornerDrag, page: CGRect) {
+        let returning = direction == .previous
+        if drag.gestureProgress == 0 { rectangle(page, material: returning ? 1 : 0); return }
+        if drag.gestureProgress == 1, drag.archContactStrength == 0 { rectangle(page, material: returning ? 0 : 1); return }
+        let sourcePage = PaperArchGeometry.materialPage(for: drag, direction: direction)
+        if spread { rectangle(page, material: 0); rectangle(sourcePage, material: 1) }
+        else { rectangle(page, material: 1) }
+        let mesh = PaperArchGeometry.mesh(for: drag, direction: direction, stripCount: strips, readingOrder: readingOrder)
+        for shade in mesh.shadow { vertex(shade.point, material: 3, shade: Float(shade.opacity)) }
+        for (patchIndex, patch) in mesh.patches.enumerated() {
+            for (vertexIndex, source) in patch.source.enumerated() {
+                var uv = source
+                if patch.back && spread {
+                    if axis == .horizontal { uv.x = size.width - source.x }
+                    else { uv.y = size.height - source.y }
+                }
+                vertex(source.applying(patch.transform), uv: uv, material: patch.back ? (spread ? 1 : 2) : 0,
+                    shade: Float(mesh.shades[patchIndex][vertexIndex]))
             }
         }
     }

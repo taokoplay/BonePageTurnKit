@@ -8,6 +8,17 @@ struct PaperCornerDrag: Equatable {
     let canvasSize: CGSize
     private(set) var hasContact = false
     let axis: PageTurnAxis
+    let effect: PageTurnEffect
+    /// 指腹约束强度；拖动为 1，松手时沿现有收尾时序平滑减至 0。
+    var archContactStrength: CGFloat = 1
+    struct ArchRelease: Equatable {
+        let translation: CGPoint
+        let completed: Bool
+        let fraction: CGFloat
+    }
+    var archRelease: ArchRelease? = nil
+    /// 原生 follower 重建中间姿态时沿用本次拱页事务的方向。
+    private(set) var archDirection: PageTurnDirection = .next
     let origin: CGPoint
     private(set) var corner: CGPoint
     let inwardSign: CGFloat
@@ -38,12 +49,18 @@ struct PaperCornerDrag: Equatable {
 
     var length: CGFloat { axis == .horizontal ? page.width : page.height }
     var progress: CGFloat {
+        if effect == .arch {
+            let extent = axis == .horizontal ? canvasSize.width : canvasSize.height
+            let primary = axis == .horizontal ? translation.x : translation.y
+            return min(1, max(0, primary * inwardSign / extent))
+        }
         let primary = axis == .horizontal ? translation.x : translation.y
         return min(1, max(0, primary * inwardSign / (2 * length)))
     }
 
     /// 手指从原按下点实际移动的进度，独立于按下位置对应的初始折起程度。
     var gestureProgress: CGFloat {
+        if effect == .arch { return progress }
         let primary = axis == .horizontal ? gripPosition.x - origin.x : gripPosition.y - origin.y
         return min(1, max(0, primary * inwardSign / (2 * length)))
     }
@@ -65,6 +82,7 @@ struct PaperCornerDrag: Equatable {
 
     /// 材料上的抓取基准；中段保留实际抓取高度，角落仍锚定原始纸角。
     var gripOrigin: CGPoint {
+        if effect == .arch { return origin }
         guard !locksCorner else { return corner }
         return axis == .horizontal ? CGPoint(x: corner.x, y: origin.y) : CGPoint(x: origin.x, y: corner.y)
     }
@@ -82,13 +100,16 @@ struct PaperCornerDrag: Equatable {
 
     /// - Parameters: size: 零原点画布；axis: 翻页轴；spread: 中央双页；inwardSign: 当前逻辑方向的物理符号；origin: 画布内按下位置。
     /// - Returns: 从当前物理边初始化；角落起拖锁角，中段起拖随移动选择折向，非法输入返回 nil。
-    init?(size: CGSize, axis: PageTurnAxis, spread: Bool, inwardSign: CGFloat, origin: CGPoint) {
+    init?(size: CGSize, axis: PageTurnAxis, spread: Bool, inwardSign: CGFloat, origin: CGPoint,
+          effect: PageTurnEffect = .curl) {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+              effect == .curl || effect == .arch,
               size.width <= 1e7, size.height <= 1e7,
               origin.x.isFinite, origin.y.isFinite,
               (0...size.width).contains(origin.x), (0...size.height).contains(origin.y),
               inwardSign == -1 || inwardSign == 1 else { return nil }
         self.axis = axis; self.origin = origin; self.inwardSign = inwardSign; self.canvasSize = size
+        self.effect = effect
         let entire = CGRect(origin: .zero, size: size)
         let fromMaximum = inwardSign < 0
         if spread, axis == .horizontal {
@@ -103,8 +124,13 @@ struct PaperCornerDrag: Equatable {
 
     /// - Parameter point: 当前画布绝对触点；可达范围内直接对齐纸面控制点，不叠加起始偏移或跟随缓动。
     /// - Returns: 受书脊可达范围约束的新状态；非法值返回 nil。
-    func moved(to point: CGPoint, direction: PageTurnDirection = .next) -> Self? {
+    func moved(to point: CGPoint) -> Self? {
+        moved(to: point, direction: effect == .arch ? archDirection : .next)
+    }
+
+    func moved(to point: CGPoint, direction: PageTurnDirection) -> Self? {
         guard point.x.isFinite, point.y.isFinite else { return nil }
+        if effect == .arch { return movedArch(to: point, direction: direction) }
         // 已选择平翻的手势只沿主轴推进，手指的轻微上下／左右抖动不再倾斜折痕。
         let point = prefersFlatTurn ? (axis == .horizontal
             ? CGPoint(x: point.x, y: origin.y) : CGPoint(x: origin.x, y: point.y)) : point
@@ -164,6 +190,59 @@ struct PaperCornerDrag: Equatable {
         return next
     }
 
+    /// 拱页从实际按下点计算位移，不使用纸角或反折圆柱的限位；起步与回收都保持同一抓取高度。
+    private func movedArch(to point: CGPoint, direction: PageTurnDirection) -> Self? {
+        let delta = CGPoint(x: point.x - origin.x, y: point.y - origin.y)
+        guard delta.x.isFinite, delta.y.isFinite else { return nil }
+        let extent = axis == .horizontal ? canvasSize.width : canvasSize.height
+        let breadth = axis == .horizontal ? canvasSize.height : canvasSize.width
+        var primary = min(extent, max(0, (axis == .horizontal ? delta.x : delta.y) * inwardSign))
+        var cross = min(breadth, max(-breadth, axis == .horizontal ? delta.y : delta.x))
+        let hinge = axis == .horizontal
+            ? (inwardSign < 0 ? page.minX : page.maxX) : (inwardSign < 0 ? page.minY : page.maxY)
+        let contact = ((axis == .horizontal ? origin.x : origin.y) - hinge) * -inwardSign
+        // 同一条书脊材料始终固定；可达范围由原抓取纸段长度决定，不能靠整页平移腾出距离。
+        if direction == .previous, archContactStrength == 1 {
+            let bookHinge: CGFloat
+            if page.size != canvasSize { bookHinge = hinge }
+            else if axis == .horizontal { bookHinge = inwardSign > 0 ? page.minX : page.maxX }
+            else { bookHinge = inwardSign > 0 ? page.minY : page.maxY }
+            let originDistance = ((axis == .horizontal ? origin.x : origin.y) - bookHinge) * inwardSign
+            primary = min(primary, max(0, length - originDistance))
+            let x = originDistance + primary
+            let load = sin(.pi * (length - x) / (2 * length))
+            let available = length - min(2, length * 0.01) * load * load
+            let capacity = max(0, (available - x) * (available + x))
+            let crossOrigin = axis == .horizontal ? origin.y : origin.x
+            let h = cross >= 0 ? crossOrigin : breadth - crossOrigin
+            let denominator = sqrt(h * h + capacity) + h
+            let reach = denominator > 0 ? capacity / denominator : 0
+            cross = min(reach, max(-reach, cross))
+        } else if archContactStrength == 1, contact > 1e-7, contact <= length {
+            primary = min(primary, 2 * contact)
+            let remaining = contact - primary
+            // 极限斜推仍需保留少量弯曲材料，避免整段纸纤维与书脊平行而把纸面压成一条线。
+            // 余量在起步和最远反折端连续归零，不为普通方向跟随额外设置死区。
+            let load = sin(.pi * primary / (2 * contact))
+            let slack = min(2, contact * 0.01) * load * load
+            let available = max(0, contact - slack)
+            let capacity = max(0, (available - remaining) * (available + remaining))
+            let crossOrigin = axis == .horizontal ? origin.y : origin.x
+            let fixedEndDistance = cross >= 0 ? crossOrigin : breadth - crossOrigin
+            // 两个装订端点都固定：q² + 2hq <= a² - x²；稳定形式避免浅拖时相减失精。
+            let denominator = sqrt(fixedEndDistance * fixedEndDistance + capacity) + fixedEndDistance
+            let reach = denominator > 0 ? capacity / denominator : 0
+            cross = min(reach, max(-reach, cross))
+        }
+        var next = self
+        next.hasContact = true
+        next.archDirection = direction
+        next.archRelease = nil
+        next.translation = axis == .horizontal
+            ? CGPoint(x: inwardSign * primary, y: cross) : CGPoint(x: cross, y: inwardSign * primary)
+        return next
+    }
+
     /// - Parameters: value: 已满足平折距离的横轴位移；pull: 向内主轴距离；length: 页宽；origin: 抓取横坐标；extent: 横轴全长。
     /// - Returns: 为圆柱展开弧长保留空间的横移；普通可达触点保持原值，越界时连续限位。
     private static func boundedCurvedCross(_ value: CGFloat, pull: CGFloat, length: CGFloat,
@@ -201,6 +280,7 @@ struct PaperCornerDrag: Equatable {
     /// - Parameters: direction: 逻辑方向；size: 整个画布；spread: 是否为中央双页。
     /// - Returns: 实际材料折面；回翻直接使用触点坐标，未接触的起始帧保持上一张纸完全折出。
     func foldingPresentation(direction: PageTurnDirection, size: CGSize, spread: Bool) -> Self? {
+        if effect == .arch { return self }
         guard direction == .previous else { return self }
         let reflectedOrigin = axis == .horizontal
             ? CGPoint(x: size.width - origin.x, y: origin.y)
@@ -216,6 +296,7 @@ struct PaperCornerDrag: Equatable {
     /// - Parameters: direction: 原交互逻辑方向；size: 画布；spread: 是否双页。
     /// - Returns: 从已显示的材料姿态还原交互坐标；回翻起手或取消可位于画布外，不能再钳制到页边。
     func interactivePresentation(direction: PageTurnDirection, size: CGSize, spread: Bool) -> Self? {
+        if effect == .arch { return self }
         guard direction == .previous else { return self }
         let reflectedOrigin = axis == .horizontal
             ? CGPoint(x: size.width - origin.x, y: origin.y)
@@ -234,6 +315,19 @@ struct PaperCornerDrag: Equatable {
     func released(completed: Bool, fraction: CGFloat, direction: PageTurnDirection = .next) -> Self {
         guard fraction.isFinite else { return self }
         let t = min(1, max(0, fraction))
+        if effect == .arch {
+            guard t > 0 else { return self }
+            let extent = axis == .horizontal ? canvasSize.width : canvasSize.height
+            let end: CGPoint = !completed ? .zero : (axis == .horizontal
+                ? CGPoint(x: inwardSign * extent, y: 0) : CGPoint(x: 0, y: inwardSign * extent))
+            var next = self
+            next.translation = CGPoint(x: translation.x + (end.x - translation.x) * t,
+                                       y: translation.y + (end.y - translation.y) * t)
+            next.archContactStrength = archContactStrength * (1 - t * t * (3 - 2 * t))
+            next.archRelease = ArchRelease(translation: archRelease?.translation ?? translation,
+                completed: completed, fraction: t)
+            return next
+        }
         let end: CGPoint
         if direction == .previous {
             let extent = axis == .horizontal ? canvasSize.width : canvasSize.height
@@ -255,6 +349,7 @@ struct PaperCornerDrag: Equatable {
     func released(completed: Bool, fraction: CGFloat, direction: PageTurnDirection,
                   angleIntent: Self?) -> Self {
         let base = released(completed: completed, fraction: fraction, direction: direction)
+        if effect == .arch { return base }
         guard completed, fraction.isFinite, let intent = angleIntent,
               intent.axis == axis, intent.page == page, intent.canvasSize == canvasSize,
               intent.origin == origin, intent.inwardSign == inwardSign,

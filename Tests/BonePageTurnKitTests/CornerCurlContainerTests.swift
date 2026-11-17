@@ -650,9 +650,9 @@ final class CornerCurlContainerTests: XCTestCase {
         assertEvents(events, completed: false)
     }
 
-    /// 无参数；触点重载只接受 curl，旧效果不会因误用触点接口而请求或挂载目标。无返回值。
+    /// 无参数；非纸张效果误用二维触点接口时，不请求或挂载目标。无返回值。
     func testPointAPIRejectsOtherEffectsBeforeRequestingContent() throws {
-        for effect in [PageTurnEffect.none, .cover, .slide, .arch] {
+        for effect in [PageTurnEffect.none, .cover, .slide] {
             let reader = try reader(effect: effect)
             defer { reader.invalidate() }
             var requests = 0
