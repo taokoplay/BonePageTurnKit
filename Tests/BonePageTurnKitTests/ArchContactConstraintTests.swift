@@ -66,12 +66,10 @@ final class ArchContactConstraintTests: XCTestCase {
                          order: ReaderReadingOrder = .leftToRight, strips: Int = 96) -> Surface {
         let mesh = PaperArchGeometry.mesh(for: drag, direction: direction, stripCount: strips, readingOrder: order)
         let materialPage = PaperArchGeometry.materialPage(for: drag, direction: direction)
-        let materialContact = direction == .previous
-            ? point(drag.axis == .horizontal
-                ? (drag.inwardSign > 0 ? materialPage.maxX : materialPage.minX)
-                : (drag.inwardSign > 0 ? materialPage.maxY : materialPage.minY),
-                cross(drag.origin, axis: drag.axis), axis: drag.axis)
-            : drag.origin
+        let extent = drag.axis == .horizontal ? drag.canvasSize.width : drag.canvasSize.height
+        let returning = materialPage.size != drag.canvasSize ? extent - primary(drag.origin, axis: drag.axis)
+            : (drag.inwardSign > 0 ? extent : 0)
+        let materialContact = direction == .previous ? point(returning, cross(drag.origin, axis: drag.axis), axis: drag.axis) : drag.origin
         return Surface(direction: direction, materialPage: materialPage, materialContact: materialContact,
             patches: mesh.patches, shades: mesh.shades, shadow: mesh.shadow, samples: mesh.samples.map {
                 MaterialSample(source: $0.source, point: $0.point, worldPoint: $0.worldPoint, height: $0.height)
@@ -117,13 +115,13 @@ final class ArchContactConstraintTests: XCTestCase {
         }
     }
 
-    private func contact(_ mesh: Surface, origin: CGPoint, touch: CGPoint, context: String,
+    private func contact(_ mesh: Surface, origin: CGPoint, touch: CGPoint, context: String, allowLift: Bool = false,
                          file: StaticString = #filePath, line: UInt = #line) throws -> MaterialSample {
         let materialOrigin = mesh.direction == .previous ? mesh.materialContact : origin
         let sample = try XCTUnwrap(mesh.samples.first { $0.source == materialOrigin },
                                    "\(context): mesh must explicitly contain the material contact", file: file, line: line)
         assertPoint(sample.point, equals: touch, context, file: file, line: line)
-        XCTAssertEqual(sample.height, 0, accuracy: epsilon, context, file: file, line: line)
+        if !allowLift { XCTAssertEqual(sample.height, 0, accuracy: epsilon, context, file: file, line: line) }
         // 检查交给绘制器的三角形，避免 samples 正确而实际投影仍漂移。
         let incident = mesh.patches.filter { $0.source.contains(materialOrigin) }
         XCTAssertFalse(incident.isEmpty, "\(context): contact must be a rendered mesh vertex", file: file, line: line)
@@ -131,6 +129,35 @@ final class ArchContactConstraintTests: XCTestCase {
             assertPoint(materialOrigin.applying(patch.transform), equals: touch, context, file: file, line: line)
         }
         return sample
+    }
+
+    private func assertPlanarPad(_ samples: [MaterialSample], _ context: String,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        guard let origin = samples.first else { XCTFail(context, file: file, line: line); return }
+        func delta(_ sample: MaterialSample) -> [CGFloat] {
+            [sample.worldPoint.x - origin.worldPoint.x, sample.worldPoint.y - origin.worldPoint.y, sample.height - origin.height]
+        }
+        var normal: [CGFloat]?
+        for a in samples.dropFirst() {
+            for b in samples.dropFirst() {
+                let u = delta(a), v = delta(b)
+                let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+                let length = sqrt(n.reduce(0) { $0 + $1 * $1 })
+                if length > 1e-8 { normal = n.map { $0 / length }; break }
+            }
+            if normal != nil { break }
+        }
+        guard let normal else { XCTFail("\(context): finite pad must span a plane", file: file, line: line); return }
+        for sample in samples {
+            let d = delta(sample)
+            XCTAssertEqual(zip(d, normal).reduce(0) { $0 + $1.0 * $1.1 }, 0, accuracy: epsilon, context, file: file, line: line)
+            for other in samples {
+                let distance = hypot(hypot(sample.worldPoint.x - other.worldPoint.x, sample.worldPoint.y - other.worldPoint.y),
+                    sample.height - other.height)
+                XCTAssertEqual(distance, hypot(sample.source.x - other.source.x, sample.source.y - other.source.y),
+                    accuracy: epsilon, "\(context): planar pad cannot stretch", file: file, line: line)
+            }
+        }
     }
 
     private func assertPinnedSpine(_ mesh: Surface, drag: PaperCornerDrag, context: String,
@@ -217,16 +244,18 @@ final class ArchContactConstraintTests: XCTestCase {
                                     let context = "\(axis)/spread=\(spread)/\(sign)/\(direction)/\(order)/h=\(height)/\(pull),\(across)"
                                     XCTAssertFalse(mesh.patches.isEmpty, context)
                                     assertFinite(mesh, context)
-                                    _ = try contact(mesh, origin: source, touch: live.gripPosition, context: context)
+                                    let liftedPad = spread
+                                    let held = try contact(mesh, origin: source, touch: live.gripPosition, context: context, allowLift: liftedPad)
+                                    var padSamples = [held]
                                     let hinge = spine(axis: axis, spread: spread, sign: direction == .previous ? -sign : sign)
                                     let materialSource = mesh.materialContact
                                     let materialOutward = direction == .previous ? sign : -sign
                                     assertPinnedSpine(mesh, drag: live, context: context)
 
-                                    // 回翻抓的是自由边，主轴只检查纸内一侧；横轴两侧仍须有有限零高度指腹。
+                                    // 单页回翻抓自由边；双页两个方向的指腹都能抬起，但不能拉伸。
                                     for alongPrimary in [true, false] {
                                         for side: CGFloat in [-1, 1] {
-                                            if direction == .previous && alongPrimary && side == sign { continue }
+                                            if !spread && direction == .previous && alongPrimary && side == sign { continue }
                                             let neighbors = mesh.samples.filter { sample in
                                                 let dp = primary(sample.source, axis: axis) - primary(materialSource, axis: axis)
                                                 let dc = cross(sample.source, axis: axis) - height
@@ -239,19 +268,22 @@ final class ArchContactConstraintTests: XCTestCase {
                                             }, context)
                                             XCTAssertLessThanOrEqual(hypot(neighbor.source.x - materialSource.x, neighbor.source.y - materialSource.y),
                                                                      12 + epsilon, "\(context): missing finite finger pad")
-                                            XCTAssertEqual(neighbor.height, 0, accuracy: epsilon, "\(context): peak under the finger pad")
+                                            padSamples.append(neighbor)
+                                            if !liftedPad {
+                                                XCTAssertEqual(neighbor.height, 0, accuracy: epsilon, "\(context): peak under the finger pad")
+                                            }
                                         }
                                     }
-                                    let materialSpan = direction == .previous ? live.length
-                                        : (primary(source, axis: axis) - hinge) * -sign
+                                    if liftedPad { assertPlanarPad(padSamples, context) }
+                                    let materialSpan = abs(primary(materialSource, axis: axis) - hinge)
                                     let interior = fiber(mesh, through: materialSource, axis: axis).filter {
                                         let u = (primary($0.source, axis: axis) - hinge) * materialOutward
                                         return u > epsilon && u < materialSpan - epsilon
                                     }
                                     let peak = try XCTUnwrap(interior.max { $0.height < $1.height }, context)
                                     XCTAssertGreaterThan(peak.height, 0.5, "\(context): supported paper must bow between spine and finger")
-                                    XCTAssertLessThanOrEqual(peak.height, materialSpan / 2 + epsilon, context)
-                                    if direction == .previous {
+                                    XCTAssertLessThanOrEqual(peak.height, liftedPad ? materialSpan : materialSpan / 2 + epsilon, context)
+                                    if direction == .previous || liftedPad {
                                         XCTAssertLessThanOrEqual(abs(primary(peak.worldPoint, axis: axis) - hinge), materialSpan + epsilon,
                                             "\(context): returning paper must stay within its full material reach of the binding")
                                     } else {
@@ -499,13 +531,13 @@ final class ArchContactConstraintTests: XCTestCase {
                             XCTAssertFalse(mesh.patches.isEmpty, context)
                             assertFinite(mesh, context)
                             assertPinnedSpine(mesh, drag: live, context: context)
-                            _ = try contact(mesh, origin: source, touch: live.gripPosition, context: context)
+                            _ = try contact(mesh, origin: source, touch: live.gripPosition, context: context, allowLift: spread)
                             let originalSpine = mesh.samples.filter { abs(primary($0.source, axis: axis) - hinge) < epsilon }
                             for sample in originalSpine {
                                 maximumSpineDrift = max(maximumSpineDrift, hypot(sample.point.x - sample.source.x, sample.point.y - sample.source.y))
                             }
                             let peak = mesh.samples.map(\.height).max() ?? 0
-                            XCTAssertLessThanOrEqual(peak, distance / 2 + epsilon, context)
+                            XCTAssertLessThanOrEqual(peak, (spread ? length : distance / 2) + epsilon, context)
                             let center = fiber(mesh, through: source, axis: axis)
                             let full = lengths(center)
                             XCTAssertEqual(full.projected3D, full.material, accuracy: full.material * 0.01, context)
@@ -513,18 +545,35 @@ final class ArchContactConstraintTests: XCTestCase {
                             maximumLineBow = max(maximumLineBow, bow)
                             if pullFraction > 0 {
                                 XCTAssertGreaterThan(peak, 0, context)
-                                XCTAssertGreaterThan(bow, distance * 0.01,
-                                    "\(context): reference paper lines must visibly bow, not stay straight on a compressed panel")
+                                if !spread {
+                                    XCTAssertGreaterThan(bow, distance * 0.01, "单页压力拱的视角保持不变")
+                                }
                             } else {
                                 for sample in mesh.samples { assertPoint(sample.point, equals: sample.source, context) }
                             }
-                            XCTAssertLessThanOrEqual(bow, distance * 0.12, "\(context): keep the observation angle gentle")
+                            if !spread { XCTAssertLessThanOrEqual(bow, distance * 0.12, context) }
+                            if spread {
+                                let rows = Dictionary(grouping: mesh.samples) { primary($0.source, axis: axis) }
+                                for column in rows.values {
+                                    guard let a = column.first else { continue }
+                                    for b in column.dropFirst() {
+                                        let width = cross(b.source, axis: axis) - cross(a.source, axis: axis)
+                                        XCTAssertEqual(cross(b.worldPoint, axis: axis) - cross(a.worldPoint, axis: axis), width, accuracy: epsilon, context)
+                                        XCTAssertEqual(a.height, b.height, accuracy: epsilon, context)
+                                        let projected = cross(b.point, axis: axis) - cross(a.point, axis: axis)
+                                        XCTAssertGreaterThanOrEqual(abs(projected) + epsilon, abs(width), context)
+                                        XCTAssertLessThanOrEqual(abs(projected), 1.25 * abs(width) + epsilon, context)
+                                    }
+                                }
+                            }
                             for patch in mesh.patches {
-                                let t = patch.transform
-                                let widthScale = axis == .horizontal ? hypot(t.c, t.d) : hypot(t.a, t.b)
-                                maximumWidthScaleError = max(maximumWidthScaleError, abs(widthScale - 1))
-                                if pullFraction <= 0.46 {
-                                    XCTAssertFalse(patch.back, "\(context): moderate pressure forms a front-facing arch")
+                                if !spread {
+                                    let t = patch.transform
+                                    let widthScale = axis == .horizontal ? hypot(t.c, t.d) : hypot(t.a, t.b)
+                                    maximumWidthScaleError = max(maximumWidthScaleError, abs(widthScale - 1))
+                                }
+                                if pullFraction <= (spread ? 0.15 : 0.46) {
+                                    XCTAssertFalse(patch.back, "\(context): initial lift remains front-facing")
                                 }
                             }
                             checked += 1
@@ -702,8 +751,8 @@ final class ArchContactConstraintTests: XCTestCase {
                     let source = origin(axis: axis, spread: spread, sign: sign)
                     for direction in directions {
                         let extent = axis == .horizontal ? canvas(axis).width : canvas(axis).height
-                        let materialMarker = direction == .previous
-                            ? point(sign > 0 ? extent : 0, cross(source, axis: axis), axis: axis) : source
+                        let mark = spread ? extent - primary(source, axis: axis) : (sign > 0 ? extent : 0)
+                        let materialMarker = direction == .previous ? point(mark, cross(source, axis: axis), axis: axis) : source
                         let current = page(size: canvas(axis), target: false, marker: direction == .next ? source : nil)
                         let target = page(size: canvas(axis), target: true, marker: direction == .previous ? materialMarker : nil)
                         let renderer = try paper(current: current, target: target, axis: axis, spread: spread, sign: sign, direction: direction)
@@ -712,11 +761,13 @@ final class ArchContactConstraintTests: XCTestCase {
                         let seed = try XCTUnwrap(PaperCornerDrag(size: canvas(axis), axis: axis, spread: spread,
                             inwardSign: sign, origin: source, effect: .arch))
                         for across: CGFloat in [-20, 20] {
-                            let requested = point(primary(source, axis: axis) + sign * 64, 240 + across, axis: axis)
+                            // 正面的绿色标记在浅拖时可见；跨中线的两面在独立用例验收。
+                            let pull: CGFloat = spread && direction == .next ? 24 : 64
+                            let requested = point(primary(source, axis: axis) + sign * pull, 240 + across, axis: axis)
                             let live = try XCTUnwrap(seed.moved(to: requested, direction: direction))
                             let touch = live.gripPosition
                             let mesh = surface(live, direction: direction)
-                            _ = try contact(mesh, origin: source, touch: touch, context: "GPU input mesh")
+                            _ = try contact(mesh, origin: source, touch: touch, context: "GPU input mesh", allowLift: spread)
                             renderer.update(progress: live.progress, cornerDrag: live)
                             let image = try XCTUnwrap(renderer.cornerGPUImage(scale: 1))
                             let pixels = try raster(image)
@@ -737,7 +788,6 @@ final class ArchContactConstraintTests: XCTestCase {
                                     let v = ((b.x - a.x) * (touch.y - a.y) - (b.y - a.y) * (touch.x - a.x)) / det
                                     return u >= -1e-8 && v >= -1e-8 && u + v <= 1 + 1e-8
                                 }, context)
-                                XCTAssertFalse(cover.source.contains(mesh.materialContact), context)
                                 XCTAssertTrue(cover.back, "Only an actually occluding paper back can hide this front-face marker")
                                 XCTAssertGreaterThan(cover.depth, 1, context)
                                 XCTAssertNil(pixels.green(in: CGRect(x: 0, y: 0, width: pixels.width, height: pixels.height)), context)
@@ -749,8 +799,7 @@ final class ArchContactConstraintTests: XCTestCase {
                                 renderer.update(progress: 1, cornerDrag: landing)
                                 let landed = try raster(XCTUnwrap(renderer.cornerGPUImage(scale: 1)))
                                 let visible = try XCTUnwrap(landed.green(in: CGRect(x: 0, y: 0, width: landed.width, height: landed.height)), context)
-                                XCTAssertGreaterThanOrEqual(visible.count, 12, "The SAME clipped material marker must reappear after unfolding")
-                                XCTAssertLessThanOrEqual(visible.count, 24, "Unfolding must not enlarge or duplicate the clipped marker")
+                                XCTAssertEqual(visible.count, 36, "完整 6×6pt 的页内标记在落定后原样重现")
                                 XCTAssertLessThanOrEqual(visible.bounds.width, 6, context)
                                 XCTAssertLessThanOrEqual(visible.bounds.height, 6, context)
                                 continue
@@ -759,7 +808,7 @@ final class ArchContactConstraintTests: XCTestCase {
                             var expectedCenter = touch
                             var maximumCount = 64
                             var maximumWidth: CGFloat = 9, maximumHeight: CGFloat = 9
-                            if direction == .previous {
+                            if direction == .previous && !spread {
                                 // 自由边截掉 6pt 标记的一半；用有限平坦指腹的刚体投影验收剩下的 3x6pt。
                                 let footprint = CGRect(x: materialMarker.x - 3, y: materialMarker.y - 3, width: 6, height: 6)
                                     .intersection(mesh.materialPage)
@@ -885,7 +934,8 @@ final class ArchContactConstraintTests: XCTestCase {
                         ? CGRect(x: materialMinimum, y: 0, width: length, height: breadth)
                         : CGRect(x: 0, y: materialMinimum, width: breadth, height: length)
                     let source = origin(axis: axis, spread: spread, sign: sign)
-                    let materialContact = point(bookHinge + sign * length, cross(source, axis: axis), axis: axis)
+                    let grab = spread ? extent - primary(source, axis: axis) : bookHinge + sign * length
+                    let materialContact = point(grab, cross(source, axis: axis), axis: axis)
                     let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: spread,
                         inwardSign: sign, origin: source, effect: .arch))
                     let folded = surface(seed, direction: .previous)
@@ -940,12 +990,12 @@ final class ArchContactConstraintTests: XCTestCase {
                                         }
                                     }
                                     if fraction == 0 {
-                                        let held = try contact(mesh, origin: source, touch: live.gripPosition, context: context)
+                                        let held = try contact(mesh, origin: source, touch: live.gripPosition, context: context, allowLift: spread)
                                         assertPoint(held.source, equals: materialContact, context)
-                                        assertPoint(held.worldPoint, equals: live.gripPosition, context)
+                                        if !spread { assertPoint(held.worldPoint, equals: live.gripPosition, context) }
                                         for end: CGFloat in [0, breadth] {
                                             let fixed = point(bookHinge, end, axis: axis)
-                                            XCTAssertLessThanOrEqual(hypot(held.worldPoint.x - fixed.x, held.worldPoint.y - fixed.y),
+                                            XCTAssertLessThanOrEqual(hypot(hypot(held.worldPoint.x - fixed.x, held.worldPoint.y - fixed.y), held.height),
                                                 hypot(materialContact.x - fixed.x, materialContact.y - fixed.y) + epsilon, context)
                                         }
                                     }
@@ -1254,5 +1304,410 @@ final class ArchContactConstraintTests: XCTestCase {
         XCTAssertLessThanOrEqual(metric.scale, 0.005)
         XCTAssertLessThanOrEqual(metric.angle, 0.005)
     }
+
+    func testCompressedArchCrestLeansIntoTurningSide() throws {
+        for axis in axes {
+            for sign: CGFloat in [-1, 1] {
+                let size = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+                let hinge: CGFloat = sign < 0 ? 0 : 390
+                let source = point(hinge - sign * 320, 422, axis: axis)
+                let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: false,
+                    inwardSign: sign, origin: source, effect: .arch))
+                let live = try XCTUnwrap(seed.moved(to: point(primary(source, axis: axis) + sign * 240, 422, axis: axis)))
+                let mesh = surface(live, direction: .next, strips: 128)
+                let fiber = mesh.samples.filter {
+                    abs(cross($0.source, axis: axis) - 422) < epsilon
+                        && (primary($0.source, axis: axis) - hinge) * -sign <= 320
+                }.sorted { (primary($0.source, axis: axis) - primary($1.source, axis: axis)) * -sign < 0 }
+                let crest = try XCTUnwrap(fiber.max { $0.height < $1.height })
+                let crestMaterial = (primary(crest.source, axis: axis) - hinge) * -sign
+                func near(_ material: CGFloat) throws -> MaterialSample {
+                    try XCTUnwrap(fiber.min {
+                        abs((primary($0.source, axis: axis) - hinge) * -sign - material)
+                            < abs((primary($1.source, axis: axis) - hinge) * -sign - material)
+                    })
+                }
+                let a = try near(crestMaterial - 12), c = try near(crestMaterial + 12)
+                let ax = primary(a.worldPoint, axis: axis), bx = primary(crest.worldPoint, axis: axis)
+                let cx = primary(c.worldPoint, axis: axis)
+                let ab = hypot(bx - ax, crest.height - a.height), bc = hypot(cx - bx, c.height - crest.height)
+                let ca = hypot(cx - ax, c.height - a.height)
+                let twiceArea = abs((bx - ax) * (c.height - a.height) - (crest.height - a.height) * (cx - ax))
+                let radius = twiceArea > 1e-9 ? ab * bc * ca / (2 * twiceArea) : .infinity
+                let crestPrimary = (primary(crest.worldPoint, axis: axis) - hinge) * -sign
+                print("ARCH_LEFT_CREST axis=\(axis) sign=\(sign) x=\(crestPrimary) height=\(crest.height) radius=\(radius)")
+                XCTAssertLessThan(crestPrimary, 80 / 2 - 320 * 0.04,
+                    "深推时拱顶应向翻页侧偏移，不能始终保持对称的竖直拱")
+                XCTAssertTrue(radius.isFinite)
+                XCTAssertGreaterThan(radius, 7.1, "拱顶附近的实际材料圆弧应比原先约 6.71pt 的半径稍饱满")
+                assertPinnedSpine(mesh, drag: live, context: "left-lean held arch")
+                let metric = try physicalMetric(mesh)
+                XCTAssertLessThanOrEqual(metric.scale, 0.005)
+                XCTAssertLessThanOrEqual(metric.angle, 0.005)
+            }
+        }
+    }
+
+    func testCompletedArchTiltsWithoutReopeningTowardSourcePage() throws {
+        for axis in axes {
+            for sign: CGFloat in [-1, 1] {
+                let size = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+                let hinge: CGFloat = sign < 0 ? 0 : 390
+                let source = point(hinge - sign * 320, 422, axis: axis)
+                let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: false,
+                    inwardSign: sign, origin: source, effect: .arch))
+                for pull: CGFloat in [180, 240] {
+                    let live = try XCTUnwrap(seed.moved(to: point(primary(source, axis: axis) + sign * pull, 422, axis: axis)))
+                    var previous: CGFloat = 320 - pull, reopening: CGFloat = 0
+                    for fraction: CGFloat in [0.01, 0.03, 0.06, 0.1, 0.16, 0.22, 0.3, 0.4, 0.5, 0.8, 1] {
+                        let pose = live.released(completed: true, fraction: fraction)
+                        let mesh = surface(pose, direction: .next)
+                        let contact = try XCTUnwrap(mesh.samples.first { $0.source == source })
+                        let position = (primary(contact.worldPoint, axis: axis) - hinge) * -sign
+                        reopening = max(reopening, position - previous); previous = position
+                        XCTAssertGreaterThanOrEqual(mesh.samples.map(\.height).min() ?? -.infinity, -epsilon,
+                            "倾倒时纸面不能穿过底页")
+                        assertPinnedSpine(mesh, drag: pose, context: "left-lean release")
+                    }
+                    print("ARCH_LEFT_REOPEN axis=\(axis) sign=\(sign) pull=\(pull) maximum=\(reopening)")
+                    XCTAssertLessThanOrEqual(reopening, 0.1,
+                        "松手完成应继续向翻页侧倾倒，不能先把纸边重新向原页展开")
+                }
+            }
+        }
+    }
+    func testContinuousCompressionKeepsCrestRoundedAcrossCriticalReach() throws {
+        for axis in axes {
+            for sign: CGFloat in [-1, 1] {
+                let size = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+                let hinge: CGFloat = sign < 0 ? 0 : 390
+                let source = point(hinge - sign * 320, 422, axis: axis)
+                let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: false,
+                    inwardSign: sign, origin: source, effect: .arch))
+                for strips in [64, 96, 128] {
+                    var maximumTurn: CGFloat = 0, worstReach: CGFloat = 0
+                    for distance: CGFloat in [80, 88, 91, 92.75, 93.05, 93.10033358053624, 93.15, 93.5, 94, 96, 100, 110] {
+                        let live = try XCTUnwrap(seed.moved(to: point(hinge - sign * distance, 422, axis: axis)))
+                        let mesh = surface(live, direction: .next, strips: strips)
+                        let fiber = mesh.samples.filter {
+                            abs(cross($0.source, axis: axis) - 422) < epsilon
+                                && (primary($0.source, axis: axis) - hinge) * -sign <= 320
+                        }.sorted { (primary($0.source, axis: axis) - primary($1.source, axis: axis)) * -sign < 0 }
+                        var previous: (x: CGFloat, z: CGFloat)?
+                        for pair in zip(fiber, fiber.dropFirst()) {
+                            let dx = primary(pair.1.worldPoint, axis: axis) - primary(pair.0.worldPoint, axis: axis)
+                            let dz = pair.1.height - pair.0.height
+                            let length = hypot(dx, dz)
+                            guard length > 1e-7 else { continue }
+                            let tangent = (x: dx / length, z: dz / length)
+                            if let previous {
+                                let angle = atan2(abs(previous.x * tangent.z - previous.z * tangent.x),
+                                    previous.x * tangent.x + previous.z * tangent.z)
+                                if angle > maximumTurn { maximumTurn = angle; worstReach = distance }
+                            }
+                            previous = tangent
+                        }
+                        assertPinnedSpine(mesh, drag: live, context: "continuous compression")
+                        let grip = try XCTUnwrap(mesh.samples.first { $0.source == source })
+                        assertPoint(grip.worldPoint, equals: live.gripPosition, "continuous compression contact")
+                    }
+                    print("ARCH_CONTINUOUS_CREST axis=\(axis) sign=\(sign) strips=\(strips) maximumTurn=\(maximumTurn) reach=\(worstReach)")
+                    XCTAssertLessThan(maximumTurn, .pi / 4,
+                        "连续压缩不能让拱顶相邻材料段几乎反向；保长并不等于曲率圆顺")
+                }
+            }
+        }
+    }
+
+    func testCompressedCenterFiberDoesNotIntersectItselfAcrossSpine() throws {
+        let size = CGSize(width: 390, height: 844)
+        let single: [(Bool, CGFloat, CGFloat)] = [20, 40, 60, 80, 93.10033358053624, 110, 140, 180, 240, 300]
+            .map { (false, 320, CGFloat($0)) }
+        let spread: [(Bool, CGFloat, CGFloat)] = [275, 215, 199, 195.002, 195, 194.998, 191, 175, 155, 115, 75]
+            .map { (true, 350, CGFloat($0)) }
+        for (spread, origin, target) in single + spread {
+            let source = CGPoint(x: origin, y: 422)
+            let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: .horizontal, spread: spread,
+                inwardSign: -1, origin: source, effect: .arch))
+            let live = try XCTUnwrap(seed.moved(to: CGPoint(x: target, y: 422)))
+            let mesh = surface(live, direction: .next)
+            let row = mesh.samples.filter { abs($0.source.y - 422) < epsilon && $0.source.x <= origin }
+                .sorted { $0.source.x < $1.source.x }
+            let curve = row.map { CGPoint(x: $0.worldPoint.x, y: $0.height) }
+            XCTAssertGreaterThan(curve.count, 4)
+            guard curve.count > 4 else { continue }
+            func side(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> CGFloat {
+                (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+            }
+            var intersections = 0
+            for i in 0..<(curve.count - 3) {
+                for j in (i + 2)..<(curve.count - 1) {
+                    let a = curve[i], b = curve[i + 1], c = curve[j], d = curve[j + 1]
+                    if side(a, b, c) * side(a, b, d) < -1e-12
+                        && side(c, d, a) * side(c, d, b) < -1e-12 { intersections += 1 }
+                }
+            }
+            XCTAssertEqual(intersections, 0, "受压纸段不能穿过自身；spread=\(spread) touch=\(target)")
+            assertPinnedSpine(mesh, drag: live, context: "compression across spine")
+            _ = try contact(mesh, origin: source, touch: live.gripPosition, context: "compression across spine", allowLift: spread)
+        }
+    }
+
+    func testMaterialTrajectoryRemainsContinuousThroughCriticalCompression() throws {
+        let size = CGSize(width: 390, height: 844), source = CGPoint(x: 320, y: 422)
+        let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: .horizontal, spread: false,
+            inwardSign: -1, origin: source, effect: .arch))
+        let anchors: [CGFloat] = [32, 64, 96, 128, 160, 192, 224, 256, 288]
+        var previous: [(CGFloat, CGFloat)]?, maximumStep: CGFloat = 0
+        for step in 0...120 {
+            let distance = 110 - CGFloat(step) * 0.25
+            let live = try XCTUnwrap(seed.moved(to: CGPoint(x: distance, y: 422)))
+            let mesh = surface(live, direction: .next)
+            let fiber = mesh.samples.filter { abs($0.source.y - 422) < epsilon }.sorted { $0.source.x < $1.source.x }
+            let positions = try anchors.map { material -> (CGFloat, CGFloat) in
+                let upper = try XCTUnwrap(fiber.firstIndex { $0.source.x >= material })
+                guard upper > 0 else { return (fiber[upper].worldPoint.x, fiber[upper].height) }
+                let a = fiber[upper - 1], b = fiber[upper]
+                let t = (material - a.source.x) / (b.source.x - a.source.x)
+                return (a.worldPoint.x + (b.worldPoint.x - a.worldPoint.x) * t, a.height + (b.height - a.height) * t)
+            }
+            if let previous {
+                for (a, b) in zip(previous, positions) { maximumStep = max(maximumStep, hypot(a.0 - b.0, a.1 - b.1)) }
+            }
+            previous = positions
+        }
+        print("ARCH_CONTINUOUS_MATERIAL dragStep=0.25 maximumMaterialStep=\(maximumStep)")
+        XCTAssertLessThan(maximumStep, 1, "连续左推不能让相同材料点在临界距离跳动")
+    }
+
+    func testCompletedSpreadArchDoesNotReopenAfterCrossingSpine() throws {
+        for axis in axes {
+            for sign: CGFloat in [-1, 1] {
+                let size = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+                let source = point(195 - sign * 155, 422, axis: axis)
+                let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: true,
+                    inwardSign: sign, origin: source, effect: .arch))
+                let live = try XCTUnwrap(seed.moved(to: point(195 + sign * 40, 422, axis: axis)))
+                var previous: CGFloat = -40, maximumReopen: CGFloat = 0
+                for fraction: CGFloat in [0, 0.00001, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 0.9, 1] {
+                    let pose = live.released(completed: true, fraction: fraction)
+                    let mesh = surface(pose, direction: .next)
+                    let grip = try XCTUnwrap(mesh.samples.first { $0.source == source })
+                    let position = (primary(grip.point, axis: axis) - 195) * -sign
+                    XCTAssertLessThanOrEqual((primary(grip.worldPoint, axis: axis) - 195) * -sign, epsilon)
+                    maximumReopen = max(maximumReopen, position - previous); previous = position
+                    XCTAssertLessThanOrEqual(position, epsilon, "已越过书脊的纸不能在松手后重新翻回原侧")
+                    assertPinnedSpine(mesh, drag: pose, context: "spread past-spine release")
+                    XCTAssertGreaterThanOrEqual(mesh.samples.map(\.height).min() ?? -.infinity, -epsilon)
+                    if fraction == 1 {
+                        for sample in mesh.samples {
+                            XCTAssertEqual(primary(sample.worldPoint, axis: axis),
+                                390 - primary(sample.source, axis: axis), accuracy: epsilon,
+                                "整张活动半页必须落到对侧，不能在原触点折返")
+                            XCTAssertEqual(sample.height, 0, accuracy: epsilon)
+                        }
+                    }
+                }
+                print("ARCH_SPREAD_RELEASE axis=\(axis) sign=\(sign) maximumReopen=\(maximumReopen)")
+                XCTAssertLessThanOrEqual(maximumReopen, 0.1, "双栏收尾不能先向右展开再向左翻转")
+            }
+        }
+    }
+
+    func testSpreadReleaseDoesNotCrossTheWholeCenterFiber() throws {
+        let size = CGSize(width: 390, height: 844)
+        for (origin, target): (CGFloat, CGFloat) in [(350, 175), (350, 155), (350, 185), (350, 215), (350, 275), (203, 191), (235, 175)] {
+            let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: .horizontal, spread: true,
+                inwardSign: -1, origin: CGPoint(x: origin, y: 422), effect: .arch))
+            let live = try XCTUnwrap(seed.moved(to: CGPoint(x: target, y: 422)))
+            for fraction: CGFloat in [0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 0.95] {
+                let mesh = surface(live.released(completed: true, fraction: fraction), direction: .next)
+                let curve = mesh.samples.filter { abs($0.source.y - 422) < epsilon }
+                    .sorted { $0.source.x < $1.source.x }.map { CGPoint(x: $0.worldPoint.x, y: $0.height) }
+                XCTAssertGreaterThan(curve.count, 4)
+                guard curve.count > 4 else { continue }
+                func side(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint) -> CGFloat {
+                    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+                }
+                var crossings = 0
+                for i in 0..<(curve.count - 3) {
+                    for j in (i + 2)..<(curve.count - 1) {
+                        let a = curve[i], b = curve[i + 1], c = curve[j], d = curve[j + 1]
+                        if side(a, b, c) * side(a, b, d) < -1e-10
+                            && side(c, d, a) * side(c, d, b) < -1e-10 { crossings += 1 }
+                    }
+                }
+                XCTAssertEqual(crossings, 0, "双栏收尾的余下纸边不能穿过拱面：\(origin)→\(target) f=\(fraction)")
+                XCTAssertGreaterThanOrEqual(mesh.samples.map(\.height).min() ?? -.infinity, -epsilon)
+            }
+        }
+    }
+
+    func testHeldSpreadTurnsWholeSheetAboveOriginalSpine() throws {
+        for axis in axes {
+            for sign: CGFloat in [-1, 1] {
+                let size = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+                let source = point(195 - sign * 155, 422, axis: axis)
+                let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: true,
+                    inwardSign: sign, origin: source, effect: .arch))
+                for distance: CGFloat in [0, -20, -40, -80, -155] {
+                    let touch = point(195 - sign * distance, 422, axis: axis)
+                    let live = try XCTUnwrap(seed.moved(to: touch))
+                    let mesh = surface(live, direction: .next)
+                    let context = "whole spread \(axis)/\(sign)/D=\(distance)"
+                    assertFinite(mesh, context)
+                    assertPinnedSpine(mesh, drag: live, context: context)
+                    let grip = try XCTUnwrap(mesh.samples.first { $0.source == source })
+                    assertPoint(grip.point, equals: live.gripPosition, context)
+                    if distance == -155 {
+                        for sample in mesh.samples {
+                            XCTAssertEqual(primary(sample.worldPoint, axis: axis), 390 - primary(sample.source, axis: axis), accuracy: epsilon, context)
+                            XCTAssertEqual(sample.height, 0, accuracy: epsilon, context)
+                        }
+                    } else {
+                        let row = fiber(mesh, through: source, axis: axis)
+                        let x = row.map { (primary($0.point, axis: axis) - 195) * -sign }
+                        if distance == 0 {
+                            XCTAssertGreaterThan(x.max() ?? 0, 16, "内段尚在原侧，不能把纸立成一道线")
+                            XCTAssertLessThan(x.min() ?? 0, -12, "外缘必须先过中缝")
+                            XCTAssertTrue(mesh.patches.contains { $0.back } && mesh.patches.contains { !$0.back }, context)
+                        }
+                        let free = mesh.samples.filter { abs(primary($0.source, axis: axis) - (195 - sign * 195)) < epsilon }
+                        XCTAssertGreaterThanOrEqual(free.count, 3, context)
+                        for edge in free {
+                            XCTAssertLessThan((primary(edge.worldPoint, axis: axis) - 195) * -sign, distance - 5, context)
+                            XCTAssertGreaterThan(edge.height, 95, "\(context): the raised free edge must clear the receiving page")
+                        }
+                    }
+                    let metric = try physicalMetric(mesh)
+                    XCTAssertEqual(metric.area, 195 * 844, accuracy: 0.001, context)
+                    XCTAssertLessThan(metric.scale, 0.005, context)
+                    XCTAssertLessThan(metric.angle, 0.005, context)
+                    for completed in [false, true] {
+                        let held = Dictionary(uniqueKeysWithValues: mesh.samples.map { (SourceKey($0.source), $0) })
+                        for fraction: CGFloat in [0, 0.00001] {
+                            let release = surface(live.released(completed: completed, fraction: fraction), direction: .next)
+                            for sample in release.samples {
+                                guard let previous = held[SourceKey(sample.source)] else { continue }
+                                let delta = hypot(hypot(sample.worldPoint.x - previous.worldPoint.x,
+                                    sample.worldPoint.y - previous.worldPoint.y), sample.height - previous.height)
+                                XCTAssertLessThan(delta, 0.02, "\(context): release must start at the held pose")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testSpreadLiftStaysContinuousAtPressureAndSpineBoundaries() throws {
+        for contactDistance: CGFloat in [40, 155] {
+            let source = CGPoint(x: 195 + contactDistance, y: 422)
+            let seed = try XCTUnwrap(PaperCornerDrag(size: CGSize(width: 390, height: 844), axis: .horizontal,
+                spread: true, inwardSign: -1, origin: source, effect: .arch))
+            for across: CGFloat in [-20, 0, 20] {
+                for boundary in [0.72 * contactDistance, 0.5 * contactDistance, 0.1 * contactDistance, CGFloat.zero] {
+                    var positions: [[CGPoint]] = [], heights: [[CGFloat]] = []
+                    for offset: CGFloat in [-0.0001, 0.0001] {
+                        let live = try XCTUnwrap(seed.moved(to: CGPoint(x: 195 + boundary + offset, y: 422 + across)))
+                        let mesh = surface(live, direction: .next)
+                        assertFinite(mesh, "spread lift boundary")
+                        _ = try contact(mesh, origin: source, touch: live.gripPosition,
+                            context: "spread lift boundary", allowLift: true)
+                        let row = fiber(mesh, through: source, axis: .horizontal)
+                        var points: [CGPoint] = [], values: [CGFloat] = []
+                        for index in 0...16 {
+                            let material = 195 + CGFloat(index) * 195 / 16
+                            let upper = try XCTUnwrap(row.firstIndex { $0.source.x >= material - 1e-8 })
+                            let b = row[upper], a = row[max(0, upper - 1)]
+                            let t = b.source.x > a.source.x ? (material - a.source.x) / (b.source.x - a.source.x) : 0
+                            points.append(CGPoint(x: a.worldPoint.x + (b.worldPoint.x - a.worldPoint.x) * t,
+                                y: a.worldPoint.y + (b.worldPoint.y - a.worldPoint.y) * t))
+                            values.append(a.height + (b.height - a.height) * t)
+                        }
+                        positions.append(points); heights.append(values)
+                    }
+                    for index in 0...16 {
+                        let a = positions[0][index], b = positions[1][index]
+                        XCTAssertLessThan(hypot(hypot(b.x - a.x, b.y - a.y), heights[1][index] - heights[0][index]),
+                            0.1, "微小拖动不能在开始抬页或越过书脊时切换材料姿态")
+                    }
+                }
+            }
+        }
+    }
+
+    func testSpreadMidDragKeepsWholeSheetSilhouette() throws {
+        for axis in axes {
+            let size = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+            for sign: CGFloat in [-1, 1] {
+                let source = point(195 - sign * 155, 422, axis: axis)
+                let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: true,
+                    inwardSign: sign, origin: source, effect: .arch))
+                for pull: CGFloat in [40, 80, 100, 121, 140] {
+                    for across: CGFloat in [-40, 0, 40] {
+                        let live = try XCTUnwrap(seed.moved(to: point(primary(source, axis: axis) + sign * pull,
+                            422 + across, axis: axis)))
+                        let mesh = surface(live, direction: .next)
+                        let context = "whole-sheet middle \(axis)/\(sign)/pull=\(pull)/cross=\(across)"
+                        assertFinite(mesh, context)
+                        assertPinnedSpine(mesh, drag: live, context: context)
+                        _ = try contact(mesh, origin: source, touch: live.gripPosition, context: context, allowLift: true)
+                        // 受压段有拱肩与拱顶，外段接管后才形成单向跨脊宽弧。
+                        let row = fiber(mesh, through: source, axis: axis).sorted {
+                            primary($0.source, axis: axis) * -sign < primary($1.source, axis: axis) * -sign
+                        }
+                        let angles = zip(row, row.dropFirst()).compactMap { a, b -> CGFloat? in
+                            let dx = (primary(b.worldPoint, axis: axis) - primary(a.worldPoint, axis: axis)) * -sign
+                            let dz = b.height - a.height
+                            return hypot(dx, dz) > 1e-4 ? atan2(dz, dx) : nil
+                        }
+                        let sweep = try XCTUnwrap(angles.last) - XCTUnwrap(angles.first)
+                        let excursion = (angles.max() ?? 0) - (angles.min() ?? 0)
+                        XCTAssertGreaterThan(excursion, 0.25, "\(context): the sheet must bend, not tip as a board")
+                        XCTAssertLessThan(excursion, .pi, context)
+                        if pull >= 140 {
+                            XCTAssertGreaterThan(sweep, 0.25, context)
+                            for (a, b) in zip(angles, angles.dropFirst()) {
+                                XCTAssertGreaterThanOrEqual(b - a, -0.002, context)
+                                XCTAssertLessThan(b - a, 0.12, context)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testSpreadPickupRetainsSingleLeafPressureAndLighting() throws {
+        var previousContrast: CGFloat = 0
+        for pull: CGFloat in [8, 24, 40] {
+            func pickup(spread: Bool) throws -> Surface {
+                let hinge: CGFloat = spread ? 195 : 0
+                let seed = try XCTUnwrap(PaperCornerDrag(size: CGSize(width: spread ? 390 : 195, height: 844), axis: .horizontal,
+                    spread: spread, inwardSign: -1, origin: CGPoint(x: hinge + 155, y: 422), effect: .arch))
+                let held = try XCTUnwrap(seed.moved(to: CGPoint(x: hinge + 155 - pull, y: 422)))
+                return surface(held, direction: .next)
+            }
+            let reference = try pickup(spread: false), actual = try pickup(spread: true)
+            let a = try XCTUnwrap(actual.samples.max { $0.height < $1.height })
+            let r = try XCTUnwrap(reference.samples.max { $0.height < $1.height })
+            XCTAssertGreaterThan(a.height, 8)
+            XCTAssertEqual(a.height, r.height, accuracy: epsilon)
+            XCTAssertEqual(a.point.x - 195, r.point.x, accuracy: epsilon)
+            XCTAssertEqual(a.point.y, r.point.y, accuracy: epsilon)
+            let grip = try XCTUnwrap(actual.samples.first { $0.source == CGPoint(x: 350, y: 422) })
+            XCTAssertEqual(grip.height, 0, accuracy: epsilon)
+            let aShades = actual.shades.flatMap { $0 }.sorted(), rShades = reference.shades.flatMap { $0 }.sorted()
+            XCTAssertEqual(aShades.count, rShades.count)
+            let contrast = (aShades.last ?? 0) - (aShades.first ?? 0)
+            XCTAssertGreaterThan(contrast, previousContrast + epsilon, "拱肩的明暗差应随受压深度增加")
+            previousContrast = contrast
+            XCTAssertTrue(zip(aShades, rShades).allSatisfy { abs($0 - $1) < epsilon })
+            XCTAssertFalse(actual.shadow.isEmpty)
+            XCTAssertEqual(actual.shadow.map(\.opacity).max(), reference.shadow.map(\.opacity).max())
+        }
+    }
+
 }
 #endif

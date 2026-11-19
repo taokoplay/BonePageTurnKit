@@ -288,9 +288,11 @@ private extension FullScreenDemoSettings {
     func checkedConfiguration(layout: ReaderPageLayout) throws -> PageTurnConfiguration {
         let presentation: PageTurnPresentation = effect == "continuous"
             ? .continuous(axis: sdkAxis) : .paged(effect: sdkEffect, axis: sdkAxis)
+        var paper = PaperRenderingOptions(maximumSnapshotPixels: paperPixels, stripCount: paperStrips)
+        paper.slidesOuterPaperFlat = effect == "arch"
         let configuration = PageTurnConfiguration(
             presentation: presentation, spine: sdkSpine,
-            paper: .init(maximumSnapshotPixels: paperPixels, stripCount: paperStrips),
+            paper: paper,
             layout: layout, readingOrder: sdkOrder,
             cover: .init(cornerRadius: coverCorner, shadowOpacity: shadowOpacity,
                          shadowRadius: shadowRadius, shadowOffsetX: shadowX, shadowOffsetY: shadowY))

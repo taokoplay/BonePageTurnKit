@@ -134,6 +134,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let completed: Bool
         let cornerStart: PaperCornerDrag?
         let cornerIntent: PaperCornerDrag?
+        let cornerEndFraction: CGFloat
         var frameGate: PaperReleaseFrameGate
         var awaitingFinalFrame = false
         var elapsed: TimeInterval = 0
@@ -610,6 +611,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 : (candidate.inwardSign < 0 ? candidate.page.minY : candidate.page.maxY)
             let distance = ((axis == .horizontal ? local.x : local.y) - hinge) * -candidate.inwardSign
             guard distance > 1e-7, distance <= candidate.length else { return nil }
+            drag?.slidesOuterPaperFlat = paperEffect == .arch
         }
         drag?.prefersFlatTurn = paperEffect == .curl && prefersFlatTurn
         return drag
@@ -791,8 +793,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         if paperEffect != nil {
             // 抓取点过中线或目标页实际显露过半均可完成；静止按下和快速反甩仍取消。
             let reachesMidpoint = pending.cornerDrag.map { drag in
-                guard drag.effect == .curl, drag.gestureProgress > 0 else { return false }
-                if drag.hasReachedCanvasMidpoint { return true }
+                guard drag.gestureProgress > 0 else { return false }
+                if drag.hasReachedCanvasMidpoint, drag.effect == .curl || configuration.layout == .spread { return true }
+                guard drag.effect == .curl else { return false }
                 // 仅容忍投影面积求和的浮点误差，不放宽可见半屏阈值。
                 return (paperView?.visibleTargetFraction(for: drag) ?? 0) + 1e-9 >= 0.5
             } ?? false
@@ -1014,11 +1017,16 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             let duration = baseDuration * (cornerStart == nil || pending?.isDiscreteTurn == true ? 1 : 1.2) * transitionDurationScale
             let waitsForGPU = cornerStart != nil && usesNativeRelease
             let cornerIntent = usesNativeRelease && completed ? pending?.cornerDrag : nil
+            let cornerEndFraction: CGFloat
+            if let cornerStart, cornerStart.effect == .arch, completed,
+               transition.direction == .next, configuration.layout == .single {
+                cornerEndFraction = PaperArchGeometry.visibleCompletionFraction(length: cornerStart.length)
+            } else { cornerEndFraction = 1 }
             let frameGate = PaperReleaseFrameGate(waitsForGPU: waitsForGPU,
                 submittedFrameCount: paperView?.nativeCornerSubmittedFrameCount ?? 0)
             paperRelease = PaperRelease(transitionID: transition.id, start: progress, target: target,
                                         duration: duration, completed: completed, cornerStart: cornerStart,
-                                        cornerIntent: cornerIntent, frameGate: frameGate)
+                                        cornerIntent: cornerIntent, cornerEndFraction: cornerEndFraction, frameGate: frameGate)
             if let cornerStart {
                 // 从最后已提交的姿态继续；收尾自身已计时，不再叠加跟随缓冲。
                 pending?.progress = progress
@@ -1310,7 +1318,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         paperRelease = release
         let t = CGFloat(release.elapsed / release.duration)
         let blend: CGFloat
-        if pending?.isDiscreteTurn == true {
+        if pending?.isDiscreteTurn == true || (release.completed && release.cornerStart?.effect == .arch) {
             blend = Self.fullPagePaperBlend(at: t)
         } else {
             let remainder = 1 - t
@@ -1318,7 +1326,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         }
         pending?.progress = release.start + (release.target - release.start) * blend
         if let drag = release.cornerStart, let direction = pending?.transition.direction {
-            pending?.cornerDrag = drag.released(completed: release.completed, fraction: blend, direction: direction,
+            // 可见纸面与投影先完整离开视口；仅在终帧落定其余隐藏行程。
+            let fraction = t < 1 ? blend * release.cornerEndFraction : blend
+            pending?.cornerDrag = drag.released(completed: release.completed, fraction: fraction, direction: direction,
                                                 angleIntent: release.cornerIntent)
         }
         layoutPages()
@@ -1867,7 +1877,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         if let release = paperRelease {
             trace.duration = release.duration; trace.elapsed = release.elapsed
             trace.startProgress = Double(release.start); trace.targetProgress = Double(release.target)
-            trace.curve = pending.isDiscreteTurn ? "systemEaseInOut" : "cubicEaseOut"
+            trace.curve = pending.isDiscreteTurn || (release.completed && release.cornerStart?.effect == .arch)
+                ? "systemEaseInOut" : "cubicEaseOut"
         } else if let animator {
             trace.duration = animator.duration
             trace.elapsed = animator.duration * Double(animator.fractionComplete)

@@ -11,6 +11,7 @@ struct PaperCornerDrag: Equatable {
     let effect: PageTurnEffect
     /// 指腹约束强度；拖动为 1，松手时沿现有收尾时序平滑减至 0。
     var archContactStrength: CGFloat = 1
+    var slidesOuterPaperFlat = false
     struct ArchRelease: Equatable {
         let translation: CGPoint
         let completed: Bool
@@ -202,11 +203,9 @@ struct PaperCornerDrag: Equatable {
             ? (inwardSign < 0 ? page.minX : page.maxX) : (inwardSign < 0 ? page.minY : page.maxY)
         let contact = ((axis == .horizontal ? origin.x : origin.y) - hinge) * -inwardSign
         // 同一条书脊材料始终固定；可达范围由原抓取纸段长度决定，不能靠整页平移腾出距离。
-        if direction == .previous, archContactStrength == 1 {
-            let bookHinge: CGFloat
-            if page.size != canvasSize { bookHinge = hinge }
-            else if axis == .horizontal { bookHinge = inwardSign > 0 ? page.minX : page.maxX }
-            else { bookHinge = inwardSign > 0 ? page.minY : page.maxY }
+        if direction == .previous, page.size == canvasSize, archContactStrength == 1 {
+            let bookHinge = axis == .horizontal ? (inwardSign > 0 ? page.minX : page.maxX)
+                : (inwardSign > 0 ? page.minY : page.maxY)
             let originDistance = ((axis == .horizontal ? origin.x : origin.y) - bookHinge) * inwardSign
             primary = min(primary, max(0, length - originDistance))
             let x = originDistance + primary
@@ -220,12 +219,17 @@ struct PaperCornerDrag: Equatable {
             cross = min(reach, max(-reach, cross))
         } else if archContactStrength == 1, contact > 1e-7, contact <= length {
             primary = min(primary, 2 * contact)
-            let remaining = contact - primary
+            let wholeSheet = page.size != canvasSize
+            let distance = contact - primary
+            let remaining = wholeSheet
+                ? PaperArchGeometry.spreadTurnReach(contact: contact, signedDistance: direction == .previous ? -distance : distance)
+                : distance
             // 极限斜推仍需保留少量弯曲材料，避免整段纸纤维与书脊平行而把纸面压成一条线。
             // 余量在起步和最远反折端连续归零，不为普通方向跟随额外设置死区。
             let load = sin(.pi * primary / (2 * contact))
             let slack = min(2, contact * 0.01) * load * load
-            let available = max(0, contact - slack)
+            let reserve = wholeSheet ? min(slack, max(0, contact - remaining) * 0.1) : slack
+            let available = max(0, contact - reserve)
             let capacity = max(0, (available - remaining) * (available + remaining))
             let crossOrigin = axis == .horizontal ? origin.y : origin.x
             let fixedEndDistance = cross >= 0 ? crossOrigin : breadth - crossOrigin

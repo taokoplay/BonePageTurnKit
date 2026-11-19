@@ -301,10 +301,8 @@ final class ArchDirectionalTurnTests: XCTestCase {
                             XCTAssertEqual(drag.foldingPresentation(direction: direction, size: canvas, spread: spread), drag, context)
                             XCTAssertEqual(drag.interactivePresentation(direction: direction, size: canvas, spread: spread), drag, context)
                             let patches = PaperArchGeometry.patches(for: drag, direction: direction, stripCount: 64, readingOrder: order)
-                            let sourcePage = PaperArchGeometry.materialPage(for: drag, direction: direction)
-                            let materialContact = direction == .next ? origin : point(sign > 0
-                                ? (axis == .horizontal ? sourcePage.maxX : sourcePage.maxY)
-                                : (axis == .horizontal ? sourcePage.minX : sourcePage.minY), cross(origin, axis: axis), axis: axis)
+                            let backGrip = spread ? extent - primary(origin, axis: axis) : (sign > 0 ? extent : 0)
+                            let materialContact = direction == .next ? origin : point(backGrip, cross(origin, axis: axis), axis: axis)
                             let contactPatch = try XCTUnwrap(patches.first { $0.source.contains(materialContact) }, context)
                             let projected = materialContact.applying(contactPatch.transform)
                             XCTAssertEqual(primary(projected, axis: axis), primary(touch, axis: axis), accuracy: 1e-5, context)
@@ -313,8 +311,8 @@ final class ArchDirectionalTurnTests: XCTestCase {
                             geometries.append(patches)
                         }
                         let straight = geometries[0], positive = geometries[1], negative = geometries[2]
-                        XCTAssertNotEqual(positive.map(\.projected), straight.map(\.projected), context)
-                        XCTAssertNotEqual(negative.map(\.projected), straight.map(\.projected), context)
+                        XCTAssertTrue(positive.map(\.projected) != straight.map(\.projected), context)
+                        XCTAssertTrue(negative.map(\.projected) != straight.map(\.projected), context)
                         for crossSign: CGFloat in [-1, 1] {
                             let far = try XCTUnwrap(seed.moved(to: point(primary(origin, axis: axis) + sign * 1e6,
                                 cross(origin, axis: axis) + crossSign * 1e6, axis: axis), direction: direction))
@@ -323,10 +321,10 @@ final class ArchDirectionalTurnTests: XCTestCase {
                             let bookHinge: CGFloat = spread ? extent / 2 : (sign > 0 ? 0 : extent)
                             let sourceLength = spread ? extent / 2 : extent
                             let sourceOrigin = (primary(origin, axis: axis) - bookHinge) * sign
-                            let reach = direction == .next ? currentReach : sourceLength
-                            let maximumPull = direction == .next ? min(extent, 2 * reach)
+                            let reach = direction == .next || spread ? currentReach : sourceLength
+                            let maximumPull = direction == .next || spread ? min(extent, 2 * reach)
                                 : min(extent, sourceLength - sourceOrigin)
-                            let end = direction == .next ? reach - maximumPull : sourceOrigin + maximumPull
+                            let end = direction == .next || spread ? reach - maximumPull : sourceOrigin + maximumPull
                             let fixedEnd = crossSign > 0 ? cross(origin, axis: axis) : breadth - cross(origin, axis: axis)
                             let capacity = max(0, (reach - end) * (reach + end))
                             let across = min(breadth, sqrt(fixedEnd * fixedEnd + capacity) - fixedEnd)
@@ -357,14 +355,14 @@ final class ArchDirectionalTurnTests: XCTestCase {
                     let drag = try XCTUnwrap(seed.moved(to: touch, direction: direction))
                     let mesh = PaperArchGeometry.mesh(for: drag, direction: direction, stripCount: 64)
                     assertFinite(mesh.patches, context: "\(axis)/\(spread)/\(direction)")
-                    let sourcePage = PaperArchGeometry.materialPage(for: drag, direction: direction)
-                    let materialContact = direction == .next ? origin : point(sign > 0
-                        ? (axis == .horizontal ? sourcePage.maxX : sourcePage.maxY)
-                        : (axis == .horizontal ? sourcePage.minX : sourcePage.minY), cross(origin, axis: axis), axis: axis)
+                    let backGrip = spread ? extent - primary(origin, axis: axis) : (sign > 0 ? extent : 0)
+                    let materialContact = direction == .next ? origin : point(backGrip, cross(origin, axis: axis), axis: axis)
                     let contact = try XCTUnwrap(mesh.samples.first { $0.source == materialContact })
                     XCTAssertEqual(contact.point.x, touch.x, accuracy: 1e-6)
                     XCTAssertEqual(contact.point.y, touch.y, accuracy: 1e-6)
-                    XCTAssertEqual(contact.height, 0, accuracy: 1e-7, "触点不能成为波峰")
+                    if spread {
+                        XCTAssertGreaterThan(contact.height, 0, "双页接近书脊时连同有限指腹一起抬起")
+                    } else { XCTAssertEqual(contact.height, 0, accuracy: 1e-7, "触点不能成为波峰") }
                     XCTAssertGreaterThan(mesh.samples.map(\.height).max() ?? 0, 1, "受压纸段仍应弓起")
                     XCTAssertTrue(mesh.samples.allSatisfy { $0.height >= 0 }, "纸面不能穿过底页")
                     let materialSign = direction == .previous ? -sign : sign
@@ -540,9 +538,14 @@ final class ArchDirectionalTurnTests: XCTestCase {
                             if order == .leftToRight, offset != 0 { gallery.append((context, image)) }
                         }
                         for images in [actualRasters, referenceRasters] {
-                            XCTAssertGreaterThan(images[1].changedFraction(from: images[2]), 0.01, "上下斜拉必须改变实际像素")
-                            XCTAssertGreaterThan(images[0].changedFraction(from: images[1]), 0.005, "斜拉不能退化为直拖")
-                            XCTAssertGreaterThan(images[0].changedFraction(from: images[2]), 0.005, "相反横移也必须传入渲染")
+                            // 双页整页抬升只允许轻弯；仍须区分两个横移方向，不要求旧压力拱面的强烈像素变化。
+                            let wholeSheet = spread && direction == .next
+                            XCTAssertGreaterThan(images[1].changedFraction(from: images[2]), wholeSheet ? 0.0005 : 0.01,
+                                "上下斜拉必须改变实际像素")
+                            XCTAssertGreaterThan(images[0].changedFraction(from: images[1]), wholeSheet ? 0.0005 : 0.005,
+                                "斜拉不能退化为直拖")
+                            XCTAssertGreaterThan(images[0].changedFraction(from: images[2]), wholeSheet ? 0.0005 : 0.005,
+                                "相反横移也必须传入渲染")
                         }
                         XCTAssertEqual(gpu.softwareCornerDrawCount, 0, "离屏 GPU 验收不能调用软件绘图冒充")
                     }
@@ -702,6 +705,63 @@ final class ArchDirectionalTurnTests: XCTestCase {
         }
     }
 
+    func testCompletedArchKeepsMovingPaperVisibleUntilLateRelease() throws {
+        try XCTSkipUnless(PaperCornerMetalRenderer.isSupported, "需要实际 Metal 画面检查剩余翻页")
+        for axis in axes {
+            for order in orders {
+                for direction in directions {
+                    let reader = try reader(axis: axis, order: order)
+                    defer { reader.invalidate() }
+                    reader.animationDiagnosticsEnabled = true
+                    var events: [PageTransitionEvent] = []
+                    reader.onTransition = { events.append($0) }
+                    let sign = inwardSign(axis: axis, order: order, direction: direction)
+                    let origin = point(sign < 0 ? 220 : 20, 180, axis: axis)
+                    XCTAssertTrue(try reader.beginInteractiveTurn(direction, at: origin))
+                    reader.updateInteractiveTurn(to: point(primary(origin, axis: axis) + sign * 96, 180, axis: axis))
+                    let paper = try XCTUnwrap(reader.activePaperView)
+                    let live = try XCTUnwrap(paper.cornerDrag)
+                    let target = try content(direction == .next ? 7 : 5, axis: axis, layout: .single, order: order)
+                    let targetPixels = try raster(capture(target.controller.view))
+                    reader.endInteractiveTurn(velocity: 900)
+                    let duration = try XCTUnwrap(reader.animationDiagnostic?.duration)
+                    XCTAssertEqual(paper.cornerDrag, live, "松手不能先跳到逻辑终态")
+                    var elapsed: TimeInterval = 0
+                    for fraction: Double in [0.25, 0.5, 0.75, 0.9, 0.999] {
+                        let deadline = duration * fraction
+                        while deadline - elapsed > 1e-9 {
+                            let step = min(1.0 / 120, deadline - elapsed)
+                            reader.advancePaperAnimation(elapsed: step)
+                            elapsed += step
+                        }
+                        XCTAssertTrue(reader.isTransitioning)
+                        XCTAssertEqual(reader.currentPage.identity.unitID, "6", "剩余纸面落定前不能提交页码")
+                        let image = try XCTUnwrap(paper.cornerGPUImage(scale: 1))
+                        let difference = try raster(image).changedFraction(from: targetPixels)
+                        if fraction == 0.75, direction == .next {
+                            let d = try XCTUnwrap(paper.cornerDrag), m = PaperArchGeometry.mesh(for: d, direction: direction, stripCount: 96)
+                            let xs = m.samples.map { primary($0.point, axis: axis) }
+                            print("ARCH_DEBUG fraction=\(fraction) release=\(d.archRelease?.fraction ?? -1) min=\(xs.min() ?? -1) max=\(xs.max() ?? -1) patches=\(m.patches.count) samples=\(m.samples.count)")
+                            print("ARCH_DEBUG axis=\(axis) order=\(order) fraction=\(fraction) gesture=\(d.gestureProgress) strength=\(d.archContactStrength) min=\(xs.min() ?? -1) max=\(xs.max() ?? -1) patches=\(m.patches.count) samples=\(m.samples.count)")
+                        }
+                        if fraction == 0.5 || fraction == 0.75 {
+                            XCTAssertGreaterThan(difference, 0.01, "收尾仍有剩余时间，纸面不能提前消失为整张目标页")
+                        }
+                        if fraction == 0.999 {
+                            XCTAssertLessThan(difference, 0.002, "终帧之前应已消退残余投影，不能在换页时突然清掉灰带")
+                        }
+                        let attachment = XCTAttachment(image: image)
+                        attachment.name = "arch-release-\(axis)-\(order)-\(direction)-time\(Int(fraction * 100))"
+                        attachment.lifetime = .keepAlways; add(attachment)
+                    }
+                    finish(reader)
+                    assertEvents(events, completed: true)
+                    XCTAssertEqual(reader.currentPage.identity.unitID, direction == .next ? "7" : "5")
+                }
+            }
+        }
+    }
+
     func testMountedArchFollowerAndReleaseShareCurlRenderClockAndCleanUpMemory() async throws {
         try XCTSkipUnless(PaperCornerMetalRenderer.isSupported, "原生提交检查需要 Metal")
         for effect in [PageTurnEffect.arch, .curl] {
@@ -844,10 +904,13 @@ final class ArchDirectionalTurnTests: XCTestCase {
             XCTAssertTrue(paper.usesMetalCornerRendering)
             let seed = try XCTUnwrap(PaperCornerDrag(size: size, axis: axis, spread: false,
                 inwardSign: -1, origin: source, effect: .arch))
-            let pulls: [(CGFloat, CGFloat)] = [(70, 0), (390 * 0.32, 0), (390 * 0.46, 0), (180, -40), (180, 40), (270, 0), (78, -40), (78, 40)]
+            let pulls: [(CGFloat, CGFloat)] = [(70, 0), (390 * 0.32, 0), (390 * 0.46, 0), (180, -40), (180, 40), (270, 0), (78, -40), (78, 40),
+                (210, 0), (220, 0), (226.89966641946376, 0), (232, 0), (240, 0), (250, 0)]
             for (index, pull) in pulls.enumerated() {
                 let live = try XCTUnwrap(seed.moved(to: point(320 - pull.0, 422 + pull.1, axis: axis)))
-                for fraction: CGFloat in (index == 3 ? [0, 0.35, 0.7] : [0]) {
+                let fractions: [CGFloat] = index == 3 ? [0, 0.35, 0.7]
+                    : (index == 5 ? [0, 0.12, 0.22, 0.3, 0.4, 0.5, 0.55, 1] : [0])
+                for fraction in fractions {
                     let pose = live.released(completed: true, fraction: fraction)
                     let mesh = PaperArchGeometry.mesh(for: pose, direction: .next, stripCount: 96)
                     XCTAssertLessThanOrEqual(mesh.samples.map(\.height).max() ?? 0, pose.length)
@@ -872,6 +935,25 @@ final class ArchDirectionalTurnTests: XCTestCase {
                     let attachment = XCTAttachment(image: image)
                     attachment.name = "arch-sheet-\(axis)-pose\(index)-release\(Int(fraction * 100))"
                     attachment.lifetime = .keepAlways; add(attachment)
+                    if index >= 8 {
+                        let center = mesh.samples.filter { abs(cross($0.source, axis: axis) - 422) < 1e-7 }
+                        let crest = try XCTUnwrap(center.max { $0.height < $1.height })
+                        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+                        let marked = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+                            image.draw(at: .zero)
+                            let markers: [(String, CGPoint, UIColor)] = [
+                                ("A", point(0, 422, axis: axis), .systemTeal),
+                                ("B", live.gripPosition, .systemGreen), ("C", crest.point, .systemPink)]
+                            for (label, position, color) in markers {
+                                color.setFill(); renderer.fill(CGRect(x: position.x - 3, y: position.y - 3, width: 6, height: 6))
+                                (label as NSString).draw(at: CGPoint(x: position.x + 5, y: position.y - 13),
+                                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 12), .foregroundColor: color])
+                            }
+                        }
+                        let diagnostic = XCTAttachment(image: marked)
+                        diagnostic.name = "arch-critical-contact-\(axis)-pose\(index)"
+                        diagnostic.lifetime = .keepAlways; add(diagnostic)
+                    }
                 }
             }
         }
@@ -980,7 +1062,7 @@ final class ArchDirectionalTurnTests: XCTestCase {
         for axis in axes {
             let canvas = size(axis)
             let seed = try XCTUnwrap(PaperCornerDrag(size: canvas, axis: axis, spread: true,
-                inwardSign: 1, origin: point(100, 180, axis: axis), effect: .arch))
+                inwardSign: 1, origin: point(40, 180, axis: axis), effect: .arch))
             let start = try XCTUnwrap(seed.moved(to: point(108, 180, axis: axis), direction: .previous))
             let target = try XCTUnwrap(seed.moved(to: point(200, 180, axis: axis), direction: .previous))
             var follower = PaperCornerDragFollower()
@@ -994,20 +1076,165 @@ final class ArchDirectionalTurnTests: XCTestCase {
                     "Previous native frames must not clamp at x=140 then jump to x=200")
                 if !follower.isSettled && primary(current.gripPosition, axis: axis) > 140 { intermediateBeyondOldClamp = true }
             }
-            XCTAssertTrue(intermediateBeyondOldClamp)
+            XCTAssertTrue(intermediateBeyondOldClamp, "回翻的跟手轨迹必须连续跨过书脊")
             XCTAssertEqual(follower.current, target)
-            for (spread, origin, requested) in [(false, CGFloat(238), CGFloat(300)), (true, 120, 320)] {
+            for (spread, origin, requested) in [(false, CGFloat(238), CGFloat(300)), (true, 32, 320)] {
                 let seed = try XCTUnwrap(PaperCornerDrag(size: canvas, axis: axis, spread: spread,
                     inwardSign: 1, origin: point(origin, 180, axis: axis), effect: .arch))
                 let drag = try XCTUnwrap(seed.moved(to: point(requested, 180, axis: axis), direction: .previous))
-                XCTAssertEqual(primary(drag.gripPosition, axis: axis), 240, accuracy: 1e-6)
+                let bound: CGFloat = spread ? 240 - origin : 240
+                XCTAssertEqual(primary(drag.gripPosition, axis: axis), bound, accuracy: 1e-6)
                 let mesh = PaperArchGeometry.mesh(for: drag, direction: .previous, stripCount: 96)
-                let material = point(240, 180, axis: axis)
+                let material = point(bound, 180, axis: axis)
                 let actual = try XCTUnwrap(mesh.samples.first { $0.source == material })
                 XCTAssertEqual(actual.point.x, drag.gripPosition.x, accuracy: 1e-5)
                 XCTAssertEqual(actual.point.y, drag.gripPosition.y, accuracy: 1e-5)
             }
         }
     }
+    func testSpreadArchHeldAcrossSpineProducesFiniteGPUFrames() throws {
+        try XCTSkipUnless(PaperCornerMetalRenderer.isSupported, "Requires actual Metal output")
+        for axis in axes {
+            let canvas = axis == .horizontal ? CGSize(width: 390, height: 844) : CGSize(width: 844, height: 390)
+            let paper = try PaperTransitionView(
+                currentView: fixture("6", target: false, size: canvas, axis: axis, spread: true),
+                targetView: fixture("7", target: true, size: canvas, axis: axis, spread: true),
+                effect: .arch, direction: .next, spine: .center,
+                options: .init(maximumSnapshotPixels: Int(canvas.width * canvas.height) * 2, stripCount: 96),
+                axis: axis, cornerDriven: true)
+            defer { paper.invalidateResources() }
+            let seed = try XCTUnwrap(PaperCornerDrag(size: canvas, axis: axis, spread: true,
+                inwardSign: -1, origin: point(350, 422, axis: axis), effect: .arch))
+            let targetPixels = try raster(capture(fixture("7", target: true, size: canvas, axis: axis, spread: true)))
+            for (index, target) in [CGFloat(275), 215, 195.002, 195, 194.998, 175, 155, 115, 75, 40].enumerated() {
+                let live = try XCTUnwrap(seed.moved(to: point(target, 422, axis: axis)))
+                let mesh = PaperArchGeometry.mesh(for: live, direction: .next, stripCount: 96)
+                assertFinite(mesh.patches, context: "spread across spine")
+                XCTAssertGreaterThanOrEqual(mesh.samples.map(\.height).min() ?? -.infinity, -1e-4)
+                paper.update(progress: live.gestureProgress, cornerDrag: live)
+                let image = try XCTUnwrap(paper.cornerGPUImage(scale: 1))
+                XCTAssertEqual(image.size, canvas)
+                if target == 195 {
+                    let frame = try raster(image)
+                    let left = point(185, 320, axis: axis), right = point(320, 320, axis: axis)
+                    let cover = frame.rgb(x: Int(left.x), y: Int(left.y))
+                    XCTAssertGreaterThan(Int(cover[2]) - Int(cover[0]), 12,
+                        "触点在中缝时，左页已有可见宽度的青色纸背覆盖；不应是原页或仅有阴影")
+                    XCTAssertEqual(frame.rgb(x: Int(right.x), y: Int(right.y)),
+                        targetPixels.rgb(x: Int(right.x), y: Int(right.y)), "右侧远离投影的下一页应已显露")
+                }
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "arch-spine-held-\(axis)-case\(index)"
+                attachment.lifetime = .keepAlways; add(attachment)
+                if index == 1 || index == 6 {
+                    for fraction: CGFloat in [0.1, 0.2, 0.35, 0.5, 0.7, 0.9, 1] {
+                        let released = live.released(completed: true, fraction: fraction)
+                        paper.update(progress: released.gestureProgress, cornerDrag: released)
+                        let frame = try XCTUnwrap(paper.cornerGPUImage(scale: 1))
+                        if fraction == 1 {
+                            XCTAssertLessThan(try raster(frame).changedFraction(from: targetPixels), 0.003,
+                                "双栏活动半页落定后，两侧内容必须与完整目标页一致")
+                        }
+                        let releaseFrame = XCTAttachment(image: frame)
+                        releaseFrame.name = "arch-spread-release-\(axis)-case\(index)-fraction\(Int(fraction * 100))"
+                        releaseFrame.lifetime = .keepAlways; add(releaseFrame)
+                    }
+                }
+            }
+            for across: CGFloat in [-40, 0, 40] {
+                let live = try XCTUnwrap(seed.moved(to: point(229, 422 + across, axis: axis)))
+                paper.update(progress: live.gestureProgress, cornerDrag: live)
+                let attachment = XCTAttachment(image: try XCTUnwrap(paper.cornerGPUImage(scale: 1)))
+                attachment.name = "arch-spread-middle-\(axis)-cross\(Int(across))"
+                attachment.lifetime = .keepAlways; add(attachment)
+            }
+        }
+    }
+
+    func testSameSpreadLeafHasReciprocalGPUFramesInBothDirections() throws {
+        try XCTSkipUnless(PaperCornerMetalRenderer.isSupported, "Requires actual Metal output")
+        let canvas = CGSize(width: 240, height: 360)
+        for effect in [PageTurnEffect.curl, .arch] {
+            func make(_ returning: Bool) throws -> PaperTransitionView {
+                let first = fixture("A", target: false, size: canvas, axis: .horizontal, spread: true)
+                let second = fixture("B", target: true, size: canvas, axis: .horizontal, spread: true)
+                return try PaperTransitionView(currentView: returning ? second : first,
+                    targetView: returning ? first : second, effect: effect, direction: returning ? .previous : .next,
+                    spine: .center, options: options(for: canvas), axis: .horizontal, cornerDriven: true)
+            }
+            let forward = try make(false), backward = try make(true)
+            defer { forward.invalidateResources(); backward.invalidateResources() }
+            var right = try XCTUnwrap(PaperCornerDrag(size: canvas, axis: .horizontal, spread: true,
+                inwardSign: -1, origin: CGPoint(x: 240, y: 180), effect: effect))
+            var left = try XCTUnwrap(PaperCornerDrag(size: canvas, axis: .horizontal, spread: true,
+                inwardSign: 1, origin: CGPoint(x: 0, y: 180), effect: effect))
+            right.prefersFlatTurn = true; left.prefersFlatTurn = true
+            var worst = 0.0
+            for x in stride(from: 240, through: 0, by: -8) {
+                let touch = CGPoint(x: x, y: 180)
+                let a = try XCTUnwrap(right.moved(to: touch, direction: .next))
+                let b = try XCTUnwrap(left.moved(to: touch, direction: .previous))
+                forward.update(progress: a.gestureProgress, cornerDrag: a)
+                backward.update(progress: b.gestureProgress, cornerDrag: b)
+                let front = try XCTUnwrap(forward.cornerGPUImage(scale: 1)), back = try XCTUnwrap(backward.cornerGPUImage(scale: 1))
+                let difference = try raster(front).changedFraction(from: raster(back))
+                worst = max(worst, difference)
+                for (dir, image) in [("next", front), ("previous", back)] {
+                    let frame = XCTAttachment(image: image)
+                    frame.name = "spread-pair-\(effect)-\(dir)-x\(x)"; frame.lifetime = .keepAlways; add(frame)
+                }
+            }
+            print("SPREAD_RECIPROCAL effect=\(effect) worstChangedFraction=\(worst)")
+            XCTAssertLessThan(worst, 0.003, "\(effect): 同一张纸在同一跨页位置不能因来向而换形或换面")
+        }
+    }
+
+    func testInteriorGripTracesSameMaterialAcrossSpreadInBothDirections() throws {
+        for axis in axes {
+            for order in orders {
+                let sign = inwardSign(axis: axis, order: order, direction: .next)
+                let grip = point(120 - 80 * sign, 180, axis: axis)
+                let forward = try XCTUnwrap(PaperCornerDrag(size: size(axis), axis: axis, spread: true, inwardSign: sign, origin: grip, effect: .arch))
+                let backward = try XCTUnwrap(PaperCornerDrag(size: size(axis), axis: axis, spread: true, inwardSign: -sign,
+                    origin: point(120 + 80 * sign, 180, axis: axis), effect: .arch))
+                for fromSpine: CGFloat in [-72, -24, 0, 24, 72] {
+                    let finger = point(120 + fromSpine * sign, 196, axis: axis)
+                    let a = try XCTUnwrap(forward.moved(to: finger, direction: .next))
+                    let b = try XCTUnwrap(backward.moved(to: finger, direction: .previous))
+                    XCTAssertEqual(primary(a.gripPosition, axis: axis), primary(b.gripPosition, axis: axis), accuracy: 1e-6)
+                    XCTAssertEqual(cross(a.gripPosition, axis: axis), cross(b.gripPosition, axis: axis), accuracy: 1e-6)
+                    let meshA = PaperArchGeometry.mesh(for: a, direction: .next, stripCount: 64, readingOrder: order)
+                    let meshB = PaperArchGeometry.mesh(for: b, direction: .previous, stripCount: 64, readingOrder: order)
+                    for material in [grip, point(120, 0, axis: axis), point(120 - 120 * sign, 360, axis: axis)] {
+                        let left = try XCTUnwrap(meshA.samples.first { $0.source == material })
+                        let right = try XCTUnwrap(meshB.samples.first { $0.source == material })
+                        XCTAssertEqual(left.point.x, right.point.x, accuracy: 1e-5)
+                        XCTAssertEqual(left.point.y, right.point.y, accuracy: 1e-5)
+                        XCTAssertEqual(left.height, right.height, accuracy: 1e-5)
+                    }
+                }
+            }
+        }
+    }
+
+    func testSlowSpreadReleaseAcrossSpineMatchesCurlCommit() throws {
+        for axis in axes {
+            for effect in [PageTurnEffect.curl, .arch] {
+                for direction in directions {
+                    for speed: CGFloat in [0, -900] {
+                        let r = try reader(axis: axis, layout: .spread, effect: effect)
+                        defer { r.invalidate() }
+                        let sign = inwardSign(axis: axis, order: .leftToRight, direction: direction)
+                        XCTAssertTrue(try r.beginInteractiveTurn(direction, at: point(120 - sign * 12, 180, axis: axis)))
+                        r.updateInteractiveTurn(to: point(120 + sign * 8, 180, axis: axis))
+                        r.endInteractiveTurn(velocity: speed, animated: false)
+                        XCTAssertEqual(r.currentPage.identity.unitID, speed < 0 ? "6" : (direction == .next ? "7" : "5"),
+                            "\(effect)/\(axis)/\(direction): 已跨中脊的慢速释放应完成，明确反甩应取消")
+                    }
+                }
+            }
+        }
+    }
+
 }
 #endif

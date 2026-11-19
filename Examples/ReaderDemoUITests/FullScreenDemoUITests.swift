@@ -337,6 +337,39 @@ final class FullScreenDemoUITests: XCTestCase {
         capture(app, "拱页-左到右展开上一页")
     }
 
+    @objc func testSpreadArchWholeLeafTurnsAboveSpine() {
+        let app = launch(); defer { app.terminate() }
+        settings(app)
+        choose("effect", "arch", app: app)
+        choose("pageLayout", "spread", app: app)
+        choose("spine", "center", app: app)
+        apply(app)
+        XCTAssertTrue(app.otherElements["reader-spread"].waitForExistence(timeout: 5))
+        var expected = 0
+        func drag(_ start: CGVector, _ end: CGVector, delta: Int) {
+            let canvas = app.otherElements["reader-paged"]
+            XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+            canvas.coordinate(withNormalizedOffset: start).press(forDuration: 0.05,
+                thenDragTo: canvas.coordinate(withNormalizedOffset: end), withVelocity: .slow, thenHoldForDuration: 0.3)
+            expected += delta * 2
+            showMenu(app)
+            let actual = Int(app.staticTexts["reader-position"].value as? String ?? "")
+            XCTAssertTrue(actual == expected || actual == expected + 1,
+                "落定内容必须属于目标双页范围 \(expected)...\(expected + 1)，实际 \(String(describing: actual))")
+            app.buttons["reader-hide-menu"].tap()
+            wait { !app.buttons["reader-settings-button"].isHittable }
+        }
+        app.buttons["reader-hide-menu"].tap()
+        wait { !app.buttons["reader-settings-button"].isHittable }
+        drag(CGVector(dx: 0.88, dy: 0.5), CGVector(dx: 0.18, dy: 0.5), delta: 1)
+        capture(app, "双栏拱页-过书脊后完成")
+        drag(CGVector(dx: 0.12, dy: 0.5), CGVector(dx: 0.82, dy: 0.5), delta: -1)
+        drag(CGVector(dx: 0.88, dy: 0.5), CGVector(dx: 0.78, dy: 0.5), delta: 0)
+        capture(app, "双栏拱页-短拖取消")
+        drag(CGVector(dx: 0.88, dy: 0.5), CGVector(dx: 0.58, dy: 0.5), delta: 1)
+        capture(app, "双栏拱页-书脊前松手完成")
+    }
+
     /// 四角真实斜拖、短拖取消、纵向及 RTL 都通过同一公开翻页事务。
     func testCornerCurlNativeCornersCancelAndReadingOrder() {
         let app = launch(); defer { app.terminate() }

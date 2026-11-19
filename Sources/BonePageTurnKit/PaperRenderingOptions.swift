@@ -6,6 +6,8 @@ public struct PaperRenderingOptions: Sendable, Equatable {
     public let maximumSnapshotPixels: Int
     /// 预切条带数量上限；每帧复用几何与图像，不在热路径重新裁图。
     public let stripCount: Int
+    /// 双页拱页沿翻页轴推纸，夹持点至自由边始终保持平贴。
+    public var slidesOuterPaperFlat = false
     public static let standard = PaperRenderingOptions()
 
     /// - Parameters: maximumSnapshotPixels: 65536...16777216 像素；stripCount: 32...256 条。
