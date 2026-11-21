@@ -1,114 +1,434 @@
 // !$*UTF8*$!
 {
-    archiveVersion = 1;
-    classes = {};
-    objectVersion = 56;
-    objects = {
-        E00000000000000000000101 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-        E00000000000000000000201 = {isa = PBXBuildFile; fileRef = E00000000000000000000102; };
-        E00000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = text; path = LongArticle.txt; sourceTree = "<group>"; };
-        E00000000000000000000103 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-        E00000000000000000000202 = {isa = PBXBuildFile; fileRef = E00000000000000000000103; };
-        D00000000000000000000001 = {isa = PBXBuildFile; fileRef = D00000000000000000000101; };
-        D00000000000000000000101 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoUITests.swift; sourceTree = "<group>"; };
-        C00000000000000000000001 = {isa = PBXBuildFile; fileRef = C00000000000000000000101; };
-        C00000000000000000000101 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoSettings.swift; sourceTree = "<group>"; };
-        C00000000000000000000002 = {isa = PBXBuildFile; fileRef = C00000000000000000000102; };
-        C00000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoSettingsController.swift; sourceTree = "<group>"; };
-        C00000000000000000000003 = {isa = PBXBuildFile; fileRef = C00000000000000000000103; };
-        C00000000000000000000103 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoContent.swift; sourceTree = "<group>"; };
-        C00000000000000000000004 = {isa = PBXBuildFile; fileRef = C00000000000000000000104; };
-        C00000000000000000000104 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenReaderDemoViewController.swift; sourceTree = "<group>"; };
-        C00000000000000000000005 = {isa = PBXBuildFile; fileRef = C00000000000000000000105; };
-        C00000000000000000000105 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoRendering.swift; sourceTree = "<group>"; };
-        C00000000000000000000007 = {isa = PBXBuildFile; fileRef = C00000000000000000000107; };
-        C00000000000000000000107 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCurlDemoViewController.swift; sourceTree = "<group>"; };
-        C00000000000000000000006 = {isa = PBXBuildFile; fileRef = C00000000000000000000106; };
-        C00000000000000000000106 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoActions.swift; sourceTree = "<group>"; };
-        A0000000000000000000000C = {isa = PBXBuildFile; fileRef = A0000000000000000000001C; };
-        A0000000000000000000001C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticReadingDemoViewController.swift; sourceTree = "<group>"; };
-        B00000000000000000000004 = {isa = PBXBuildFile; fileRef = B00000000000000000000015; };
-        B00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticReadingUITests.swift; sourceTree = "<group>"; };
-        A00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000011; };
-        A00000000000000000000002 = {isa = PBXBuildFile; fileRef = A00000000000000000000012; };
-        A0000000000000000000000B = {isa = PBXBuildFile; fileRef = A0000000000000000000001B; };
-        A0000000000000000000001B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSurfaceDemoViewController.swift; sourceTree = "<group>"; };
-        B00000000000000000000003 = {isa = PBXBuildFile; fileRef = B00000000000000000000014; };
-        B00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSurfaceUITests.swift; sourceTree = "<group>"; };
-        A0000000000000000000000A = {isa = PBXBuildFile; fileRef = A0000000000000000000001A; };
-        A0000000000000000000001A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoReaderDemoViewController.swift; sourceTree = "<group>"; };
-        B00000000000000000000002 = {isa = PBXBuildFile; fileRef = B00000000000000000000012; };
-        B00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoReaderUITests.swift; sourceTree = "<group>"; };
-        B00000000000000000000001 = {isa = PBXBuildFile; fileRef = B00000000000000000000011; };
-        B00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDemoUITests.swift; sourceTree = "<group>"; };
-        B00000000000000000000013 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReaderDemoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-        B00000000000000000000021 = {isa = PBXGroup; children = (B00000000000000000000011, B00000000000000000000012, B00000000000000000000014, B00000000000000000000015, D00000000000000000000101); path = ReaderDemoUITests; sourceTree = "<group>"; };
-        B00000000000000000000040 = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000051; buildPhases = (B00000000000000000000041, B00000000000000000000042, B00000000000000000000043); buildRules = (); dependencies = (B00000000000000000000071); name = ReaderDemoUITests; productName = ReaderDemoUITests; productReference = B00000000000000000000013; productType = "com.apple.product-type.bundle.ui-testing"; };
-        B00000000000000000000041 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, D00000000000000000000001); runOnlyForDeploymentPostprocessing = 0; };
-        B00000000000000000000042 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-        B00000000000000000000043 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-        B00000000000000000000051 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000062, B00000000000000000000063); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-        B00000000000000000000062 = {isa = XCBuildConfiguration; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.bone.page-turn-demo.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_TARGET_NAME = ReaderDemo; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; }; name = Debug; };
-        B00000000000000000000063 = {isa = XCBuildConfiguration; buildSettings = {GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.bone.page-turn-demo.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; TEST_TARGET_NAME = ReaderDemo; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; }; name = Release; };
-        B00000000000000000000071 = {isa = PBXTargetDependency; target = A00000000000000000000040; targetProxy = B00000000000000000000072; };
-        B00000000000000000000072 = {isa = PBXContainerItemProxy; containerPortal = A00000000000000000000030; proxyType = 1; remoteGlobalIDString = A00000000000000000000040; remoteInfo = ReaderDemo; };
-        A00000000000000000000003 = {isa = PBXBuildFile; productRef = A00000000000000000000032; };
-        A00000000000000000000004 = {isa = PBXBuildFile; fileRef = A00000000000000000000014; };
-        A00000000000000000000005 = {isa = PBXBuildFile; fileRef = A00000000000000000000015; };
-        A00000000000000000000006 = {isa = PBXBuildFile; fileRef = A00000000000000000000016; };
-        A00000000000000000000007 = {isa = PBXBuildFile; fileRef = A00000000000000000000017; };
-        A00000000000000000000008 = {isa = PBXBuildFile; fileRef = A00000000000000000000018; };
-        A00000000000000000000009 = {isa = PBXBuildFile; fileRef = A00000000000000000000019; };
-        A00000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-        A00000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDemoViewController.swift; sourceTree = "<group>"; };
-        A00000000000000000000013 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReaderDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-        A00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncRenderingDemoViewController.swift; sourceTree = "<group>"; };
-        A00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AsyncRenderingFixture.swift; path = "../../Tests/BonePageTurnKitTests/AsyncRenderingFixture.swift"; sourceTree = "<group>"; };
-        A00000000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKInteractionDemoViewController.swift; sourceTree = "<group>"; };
-        A00000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuousFillingDemoViewController.swift; sourceTree = "<group>"; };
-        A00000000000000000000018 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PagedModesDemoViewController.swift; sourceTree = "<group>"; };
-        A00000000000000000000019 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedReaderDemoViewController.swift; sourceTree = "<group>"; };
-        A00000000000000000000020 = {isa = PBXGroup; children = (A00000000000000000000021, B00000000000000000000021, A00000000000000000000022); sourceTree = "<group>"; };
-        A00000000000000000000021 = {isa = PBXGroup; children = (A00000000000000000000011, A00000000000000000000012, A00000000000000000000014, A00000000000000000000015, A00000000000000000000016, A00000000000000000000017, A00000000000000000000018, A00000000000000000000019, A0000000000000000000001A, A0000000000000000000001B, A0000000000000000000001C, C00000000000000000000101, C00000000000000000000102, C00000000000000000000103, C00000000000000000000104, C00000000000000000000105, C00000000000000000000106, C00000000000000000000107, E00000000000000000000101, E00000000000000000000102, E00000000000000000000103); path = ReaderDemo; sourceTree = "<group>"; };
-        A00000000000000000000022 = {isa = PBXGroup; children = (A00000000000000000000013, B00000000000000000000013); name = Products; sourceTree = "<group>"; };
-        A00000000000000000000030 = {
-            isa = PBXProject;
-            attributes = {BuildIndependentTargetsInParallel = YES; LastUpgradeCheck = 1500; };
-            buildConfigurationList = A00000000000000000000050;
-            compatibilityVersion = "Xcode 14.0";
-            developmentRegion = zh_CN;
-            hasScannedForEncodings = 0;
-            knownRegions = (zh_CN, en, Base);
-            mainGroup = A00000000000000000000020;
-            packageReferences = (A00000000000000000000031);
-            productRefGroup = A00000000000000000000022;
-            projectDirPath = "";
-            projectRoot = "";
-            targets = (A00000000000000000000040, B00000000000000000000040);
-        };
-        A00000000000000000000031 = {isa = XCLocalSwiftPackageReference; relativePath = ..; };
-        A00000000000000000000032 = {isa = XCSwiftPackageProductDependency; productName = BonePageTurnKit; };
-        A00000000000000000000040 = {
-            isa = PBXNativeTarget;
-            buildConfigurationList = A00000000000000000000051;
-            buildPhases = (A00000000000000000000041, A00000000000000000000042, A00000000000000000000043);
-            buildRules = ();
-            dependencies = ();
-            name = ReaderDemo;
-            packageProductDependencies = (A00000000000000000000032);
-            productName = ReaderDemo;
-            productReference = A00000000000000000000013;
-            productType = "com.apple.product-type.application";
-        };
-        A00000000000000000000041 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B, A0000000000000000000000C, C00000000000000000000001, C00000000000000000000002, C00000000000000000000003, C00000000000000000000004, C00000000000000000000005, C00000000000000000000006, C00000000000000000000007); runOnlyForDeploymentPostprocessing = 0; };
-        A00000000000000000000042 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
-        A00000000000000000000043 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (E00000000000000000000201, E00000000000000000000202); runOnlyForDeploymentPostprocessing = 0; };
-        A00000000000000000000050 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000060, A00000000000000000000061); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-        A00000000000000000000051 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000062, A00000000000000000000063); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-        A00000000000000000000060 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; ONLY_ACTIVE_ARCH = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; DEBUG_INFORMATION_FORMAT = dwarf; }; name = Debug; };
-        A00000000000000000000061 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; SWIFT_COMPILATION_MODE = wholemodule; }; name = Release; };
-        A00000000000000000000062 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Reader Demo"; INFOPLIST_FILE = ReaderDemo/Info.plist; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.bone.page-turn-demo; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-        A00000000000000000000063 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "Reader Demo"; INFOPLIST_FILE = ReaderDemo/Info.plist; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"; MARKETING_VERSION = 0.1; PRODUCT_BUNDLE_IDENTIFIER = com.bone.page-turn-demo; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
-    };
-    rootObject = A00000000000000000000030;
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00000000000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000011 /* AppDelegate.swift */; };
+		A00000000000000000000002 /* ReaderDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* ReaderDemoViewController.swift */; };
+		A00000000000000000000003 /* BonePageTurnKit in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000032 /* BonePageTurnKit */; };
+		A00000000000000000000004 /* AsyncRenderingDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* AsyncRenderingDemoViewController.swift */; };
+		A00000000000000000000005 /* AsyncRenderingFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000015 /* AsyncRenderingFixture.swift */; };
+		A00000000000000000000006 /* SDKInteractionDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000016 /* SDKInteractionDemoViewController.swift */; };
+		A00000000000000000000007 /* ContinuousFillingDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* ContinuousFillingDemoViewController.swift */; };
+		A00000000000000000000008 /* PagedModesDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000018 /* PagedModesDemoViewController.swift */; };
+		A00000000000000000000009 /* AdvancedReaderDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000019 /* AdvancedReaderDemoViewController.swift */; };
+		A0000000000000000000000A /* DuoReaderDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000001A /* DuoReaderDemoViewController.swift */; };
+		A0000000000000000000000B /* ReaderSurfaceDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000001B /* ReaderSurfaceDemoViewController.swift */; };
+		A0000000000000000000000C /* AutomaticReadingDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000001C /* AutomaticReadingDemoViewController.swift */; };
+		B00000000000000000000001 /* ReaderDemoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* ReaderDemoUITests.swift */; };
+		B00000000000000000000002 /* DuoReaderUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* DuoReaderUITests.swift */; };
+		B00000000000000000000003 /* ReaderSurfaceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000014 /* ReaderSurfaceUITests.swift */; };
+		B00000000000000000000004 /* AutomaticReadingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000015 /* AutomaticReadingUITests.swift */; };
+		C00000000000000000000001 /* FullScreenDemoSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000101 /* FullScreenDemoSettings.swift */; };
+		C00000000000000000000002 /* FullScreenDemoSettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000102 /* FullScreenDemoSettingsController.swift */; };
+		C00000000000000000000003 /* FullScreenDemoContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000103 /* FullScreenDemoContent.swift */; };
+		C00000000000000000000004 /* FullScreenReaderDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000104 /* FullScreenReaderDemoViewController.swift */; };
+		C00000000000000000000005 /* FullScreenDemoRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000105 /* FullScreenDemoRendering.swift */; };
+		C00000000000000000000006 /* FullScreenDemoActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000106 /* FullScreenDemoActions.swift */; };
+		C00000000000000000000007 /* SystemCurlDemoViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000107 /* SystemCurlDemoViewController.swift */; };
+		D00000000000000000000001 /* FullScreenDemoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000101 /* FullScreenDemoUITests.swift */; };
+		E00000000000000000000201 /* LongArticle.txt in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000102 /* LongArticle.txt */; };
+		E00000000000000000000202 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E00000000000000000000103 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B00000000000000000000072 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000030 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000040;
+			remoteInfo = ReaderDemo;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A00000000000000000000011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A00000000000000000000012 /* ReaderDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDemoViewController.swift; sourceTree = "<group>"; };
+		A00000000000000000000013 /* ReaderDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReaderDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000014 /* AsyncRenderingDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncRenderingDemoViewController.swift; sourceTree = "<group>"; };
+		A00000000000000000000015 /* AsyncRenderingFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AsyncRenderingFixture.swift; path = ../../Tests/BonePageTurnKitTests/AsyncRenderingFixture.swift; sourceTree = "<group>"; };
+		A00000000000000000000016 /* SDKInteractionDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKInteractionDemoViewController.swift; sourceTree = "<group>"; };
+		A00000000000000000000017 /* ContinuousFillingDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuousFillingDemoViewController.swift; sourceTree = "<group>"; };
+		A00000000000000000000018 /* PagedModesDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PagedModesDemoViewController.swift; sourceTree = "<group>"; };
+		A00000000000000000000019 /* AdvancedReaderDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdvancedReaderDemoViewController.swift; sourceTree = "<group>"; };
+		A0000000000000000000001A /* DuoReaderDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoReaderDemoViewController.swift; sourceTree = "<group>"; };
+		A0000000000000000000001B /* ReaderSurfaceDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSurfaceDemoViewController.swift; sourceTree = "<group>"; };
+		A0000000000000000000001C /* AutomaticReadingDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticReadingDemoViewController.swift; sourceTree = "<group>"; };
+		B00000000000000000000011 /* ReaderDemoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDemoUITests.swift; sourceTree = "<group>"; };
+		B00000000000000000000012 /* DuoReaderUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuoReaderUITests.swift; sourceTree = "<group>"; };
+		B00000000000000000000013 /* ReaderDemoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReaderDemoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000000000000000000014 /* ReaderSurfaceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSurfaceUITests.swift; sourceTree = "<group>"; };
+		B00000000000000000000015 /* AutomaticReadingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomaticReadingUITests.swift; sourceTree = "<group>"; };
+		C00000000000000000000101 /* FullScreenDemoSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoSettings.swift; sourceTree = "<group>"; };
+		C00000000000000000000102 /* FullScreenDemoSettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoSettingsController.swift; sourceTree = "<group>"; };
+		C00000000000000000000103 /* FullScreenDemoContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoContent.swift; sourceTree = "<group>"; };
+		C00000000000000000000104 /* FullScreenReaderDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenReaderDemoViewController.swift; sourceTree = "<group>"; };
+		C00000000000000000000105 /* FullScreenDemoRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoRendering.swift; sourceTree = "<group>"; };
+		C00000000000000000000106 /* FullScreenDemoActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoActions.swift; sourceTree = "<group>"; };
+		C00000000000000000000107 /* SystemCurlDemoViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCurlDemoViewController.swift; sourceTree = "<group>"; };
+		D00000000000000000000101 /* FullScreenDemoUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenDemoUITests.swift; sourceTree = "<group>"; };
+		E00000000000000000000101 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E00000000000000000000102 /* LongArticle.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = LongArticle.txt; sourceTree = "<group>"; };
+		E00000000000000000000103 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00000000000000000000042 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000003 /* BonePageTurnKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000000000000000000042 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A00000000000000000000020 = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000021 /* ReaderDemo */,
+				B00000000000000000000021 /* ReaderDemoUITests */,
+				A00000000000000000000022 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000000000000000000021 /* ReaderDemo */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000011 /* AppDelegate.swift */,
+				A00000000000000000000012 /* ReaderDemoViewController.swift */,
+				A00000000000000000000014 /* AsyncRenderingDemoViewController.swift */,
+				A00000000000000000000015 /* AsyncRenderingFixture.swift */,
+				A00000000000000000000016 /* SDKInteractionDemoViewController.swift */,
+				A00000000000000000000017 /* ContinuousFillingDemoViewController.swift */,
+				A00000000000000000000018 /* PagedModesDemoViewController.swift */,
+				A00000000000000000000019 /* AdvancedReaderDemoViewController.swift */,
+				A0000000000000000000001A /* DuoReaderDemoViewController.swift */,
+				A0000000000000000000001B /* ReaderSurfaceDemoViewController.swift */,
+				A0000000000000000000001C /* AutomaticReadingDemoViewController.swift */,
+				C00000000000000000000101 /* FullScreenDemoSettings.swift */,
+				C00000000000000000000102 /* FullScreenDemoSettingsController.swift */,
+				C00000000000000000000103 /* FullScreenDemoContent.swift */,
+				C00000000000000000000104 /* FullScreenReaderDemoViewController.swift */,
+				C00000000000000000000105 /* FullScreenDemoRendering.swift */,
+				C00000000000000000000106 /* FullScreenDemoActions.swift */,
+				C00000000000000000000107 /* SystemCurlDemoViewController.swift */,
+				E00000000000000000000101 /* Info.plist */,
+				E00000000000000000000102 /* LongArticle.txt */,
+				E00000000000000000000103 /* Assets.xcassets */,
+			);
+			path = ReaderDemo;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000022 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000013 /* ReaderDemo.app */,
+				B00000000000000000000013 /* ReaderDemoUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000021 /* ReaderDemoUITests */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000011 /* ReaderDemoUITests.swift */,
+				B00000000000000000000012 /* DuoReaderUITests.swift */,
+				B00000000000000000000014 /* ReaderSurfaceUITests.swift */,
+				B00000000000000000000015 /* AutomaticReadingUITests.swift */,
+				D00000000000000000000101 /* FullScreenDemoUITests.swift */,
+			);
+			path = ReaderDemoUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000000000000000000040 /* ReaderDemo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000051 /* Build configuration list for PBXNativeTarget "ReaderDemo" */;
+			buildPhases = (
+				A00000000000000000000041 /* Sources */,
+				A00000000000000000000042 /* Frameworks */,
+				A00000000000000000000043 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ReaderDemo;
+			packageProductDependencies = (
+				A00000000000000000000032 /* BonePageTurnKit */,
+			);
+			productName = ReaderDemo;
+			productReference = A00000000000000000000013 /* ReaderDemo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B00000000000000000000040 /* ReaderDemoUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B00000000000000000000051 /* Build configuration list for PBXNativeTarget "ReaderDemoUITests" */;
+			buildPhases = (
+				B00000000000000000000041 /* Sources */,
+				B00000000000000000000042 /* Frameworks */,
+				B00000000000000000000043 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B00000000000000000000071 /* PBXTargetDependency */,
+			);
+			name = ReaderDemoUITests;
+			productName = ReaderDemoUITests;
+			productReference = B00000000000000000000013 /* ReaderDemoUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000030 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = A00000000000000000000050 /* Build configuration list for PBXProject "ReaderDemo" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				zh_CN,
+				en,
+				Base,
+			);
+			mainGroup = A00000000000000000000020;
+			packageReferences = (
+				A00000000000000000000031 /* XCLocalSwiftPackageReference ".." */,
+			);
+			productRefGroup = A00000000000000000000022 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000000000000000000040 /* ReaderDemo */,
+				B00000000000000000000040 /* ReaderDemoUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A00000000000000000000043 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E00000000000000000000201 /* LongArticle.txt in Resources */,
+				E00000000000000000000202 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000000000000000000043 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00000000000000000000041 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000001 /* AppDelegate.swift in Sources */,
+				A00000000000000000000002 /* ReaderDemoViewController.swift in Sources */,
+				A00000000000000000000004 /* AsyncRenderingDemoViewController.swift in Sources */,
+				A00000000000000000000005 /* AsyncRenderingFixture.swift in Sources */,
+				A00000000000000000000006 /* SDKInteractionDemoViewController.swift in Sources */,
+				A00000000000000000000007 /* ContinuousFillingDemoViewController.swift in Sources */,
+				A00000000000000000000008 /* PagedModesDemoViewController.swift in Sources */,
+				A00000000000000000000009 /* AdvancedReaderDemoViewController.swift in Sources */,
+				A0000000000000000000000A /* DuoReaderDemoViewController.swift in Sources */,
+				A0000000000000000000000B /* ReaderSurfaceDemoViewController.swift in Sources */,
+				A0000000000000000000000C /* AutomaticReadingDemoViewController.swift in Sources */,
+				C00000000000000000000001 /* FullScreenDemoSettings.swift in Sources */,
+				C00000000000000000000002 /* FullScreenDemoSettingsController.swift in Sources */,
+				C00000000000000000000003 /* FullScreenDemoContent.swift in Sources */,
+				C00000000000000000000004 /* FullScreenReaderDemoViewController.swift in Sources */,
+				C00000000000000000000005 /* FullScreenDemoRendering.swift in Sources */,
+				C00000000000000000000006 /* FullScreenDemoActions.swift in Sources */,
+				C00000000000000000000007 /* SystemCurlDemoViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000000000000000000041 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* ReaderDemoUITests.swift in Sources */,
+				B00000000000000000000002 /* DuoReaderUITests.swift in Sources */,
+				B00000000000000000000003 /* ReaderSurfaceUITests.swift in Sources */,
+				B00000000000000000000004 /* AutomaticReadingUITests.swift in Sources */,
+				D00000000000000000000001 /* FullScreenDemoUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B00000000000000000000071 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000040 /* ReaderDemo */;
+			targetProxy = B00000000000000000000072 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000060 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000061 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000062 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6U7R63296A;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ReaderDemo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Reader Demo";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bone.page-turn-demo";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A00000000000000000000063 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6U7R63296A;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ReaderDemo/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Reader Demo";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bone.page-turn-demo";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B00000000000000000000062 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 6U7R63296A;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bone.page-turn-demo.uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = ReaderDemo;
+			};
+			name = Debug;
+		};
+		B00000000000000000000063 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 6U7R63296A;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bone.page-turn-demo.uitests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = ReaderDemo;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000000000000000000050 /* Build configuration list for PBXProject "ReaderDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000060 /* Debug */,
+				A00000000000000000000061 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000051 /* Build configuration list for PBXNativeTarget "ReaderDemo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000062 /* Debug */,
+				A00000000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B00000000000000000000051 /* Build configuration list for PBXNativeTarget "ReaderDemoUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00000000000000000000062 /* Debug */,
+				B00000000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A00000000000000000000031 /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A00000000000000000000032 /* BonePageTurnKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = BonePageTurnKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A00000000000000000000030 /* Project object */;
 }

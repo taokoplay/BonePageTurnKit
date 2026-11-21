@@ -171,7 +171,10 @@ final class DuoReaderDemoViewController: UIViewController {
         do {
             let group = try groupIndex(containing: anchorPage)
             let content = try presentation(group: group, preferredSource: anchorPage)
+            // 折叠屏展开态整页更大，共用自适应快照预算，避免落入 4M 出厂预算而发虚。
             let configuration = PageTurnConfiguration(presentation: .paged(effect: effect, axis: layout.axis),
+                paper: PaperRenderingOptions(maximumSnapshotPixels: DemoSnapshotBudget.recommended,
+                                             stripCount: PaperRenderingOptions.standard.stripCount),
                 layout: layout.pageLayout, readingOrder: readingOrder)
             let paged = try reader.showPaged(page: content, configuration: configuration) { [weak self] paged in
                 self?.prepare(paged)

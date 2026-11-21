@@ -107,6 +107,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let transition: PageTransition
         var progress: CGFloat = 0
         var cornerDrag: PaperCornerDrag?
+        /// 整页 GPU 效果的原点（页面坐标）：起火点／落墨点／裂源；由触点注入，水墨与破冰随手指移动。
+        var effectOrigin: CGPoint? = nil
         var isDiscreteTurn = false
     }
     /// 收尾动画的目标结果；接管时按它落定，不能让取消动画被误提交。
@@ -141,6 +143,10 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     private var paperView: PaperTransitionView?
     private var paperRelease: PaperRelease?
     private var queuedDiscreteTurns: [PageTurnDirection] = []
+    /// 水墨／破冰等触点原点效果在点击／排队翻页时使用的最近触点；被下一笔消费即清空。
+    private var pendingTouchOrigin: CGPoint? = nil
+    /// 整页 GPU 效果的当前动画原点；仅供原点跟随的单元测试读取。
+    var wholePageEffectOriginForTesting: CGPoint? { pending?.effectOrigin }
     private let maximumQueuedDiscreteTurns = 32
     private var drainingDiscreteTurns = false
     /// 手指仍按住拖动时，新意图继续按原门禁拒绝；只有动画收尾阶段才排队。
@@ -250,11 +256,10 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     }
     private var extent: CGFloat { axis == .horizontal ? view.bounds.width : view.bounds.height }
     private var paperEffect: PageTurnEffect? {
-        switch configuration.presentation {
-        case .paged(effect: .curl, axis: _): return .curl
-        case .paged(effect: .arch, axis: _): return .arch
-        default: return nil
-        }
+        if case .paged(effect: .curl, axis: _) = configuration.presentation { return .curl }
+        if case .paged(effect: .arch, axis: _) = configuration.presentation { return .arch }
+        if case .paged(let effect, axis: _) = configuration.presentation, effect.isWholePageMetalEffect { return effect }
+        return nil
     }
     /// 阅读顺序及显式书脊共同决定几何方向；provider 的逻辑方向保持不变。
     private var forwardSign: CGFloat { CGFloat(configuration.forwardDisplacementSign) }
@@ -279,7 +284,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        if paperEffect != nil { PaperCornerMetalRenderer.prewarm() }
+        if paperEffect == .curl || paperEffect == .arch { PaperCornerMetalRenderer.prewarm() }
         view.clipsToBounds = true
         view.backgroundColor = .systemBackground
         pan.delegate = self
@@ -427,12 +432,20 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     private func startDiscreteTurn(_ direction: PageTurnDirection, animated: Bool) throws -> Bool {
         let capturesPaper = animated && !UIAccessibility.isReduceMotionEnabled
         let cornerPoint: CGPoint?
+        // 整页 GPU 效果把该点作为动画原点（起火点／裂源），从运动方向的来页侧开始；仿真／拱页仍由此构造角点姿态。
         if capturesPaper, paperEffect != nil {
             loadViewIfNeeded()
-            let sign = direction == .next ? forwardSign : -forwardSign
-            cornerPoint = axis == .horizontal
-                ? CGPoint(x: sign < 0 ? view.bounds.maxX : view.bounds.minX, y: view.bounds.midY)
-                : CGPoint(x: view.bounds.midX, y: sign < 0 ? view.bounds.maxY : view.bounds.minY)
+            // 水墨／破冰优先使用最近触点（快速连滑排队或分区点击），其余效果从运动侧页缘中点开始。
+            if paperEffect?.originFollowsFinger == true, let touch = pendingTouchOrigin {
+                pendingTouchOrigin = nil
+                cornerPoint = touch
+            } else {
+                pendingTouchOrigin = nil
+                let sign = direction == .next ? forwardSign : -forwardSign
+                cornerPoint = axis == .horizontal
+                    ? CGPoint(x: sign < 0 ? view.bounds.maxX : view.bounds.minX, y: view.bounds.midY)
+                    : CGPoint(x: view.bounds.midX, y: sign < 0 ? view.bounds.maxY : view.bounds.minY)
+            }
         } else { cornerPoint = nil }
         guard try beginTurn(direction, capturesPaper: capturesPaper, cornerPoint: cornerPoint) else { return false }
         pending?.isDiscreteTurn = true
@@ -466,6 +479,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 queuedDiscreteTurns.removeAll(keepingCapacity: false); return
             }
             let direction = queuedDiscreteTurns.removeFirst()
+            // 仿真/拱页快速点击不再排队续翻：收尾只消费一笔，剩余意图直接丢弃，
+            // 结束后重新点击才翻下一页。轻量效果（平移/覆盖）保持原按序排队契约。
+            if paperEffect != nil { queuedDiscreteTurns.removeAll(keepingCapacity: false) }
             do {
                 // 边界只消费这一笔意图，后续相反方向仍可从真实落定页继续。
                 _ = try startDiscreteTurn(direction, animated: true)
@@ -522,6 +538,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             try validateTapInteraction()
             guard accepted else { return false }
         }
+        // 水墨／破冰的分区点击也从点击位置起墨／起裂（参考实现的 pointerdown 记录触点）。
+        if paperEffect?.originFollowsFinger == true { pendingTouchOrigin = point }
         switch tapAction(at: point) {
         case .previous: return try turn(.previous, animated: animated)
         case .next: return try turn(.next, animated: animated)
@@ -586,6 +604,15 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         guard isActive else { throw PageTurnError.inactive }
         guard paperEffect != nil else { throw PageTurnError.unsupportedPresentation }
         loadViewIfNeeded()
+        if paperEffect?.isWholePageMetalEffect == true {
+            // 整页 GPU 效果无角点姿态：触点即动画原点（起火点／落墨点／裂源），进入位移驱动的交互事务。
+            try validateTurnStart()
+            queuedDiscreteTurns.removeAll(keepingCapacity: false)
+            let started = try beginTurn(direction, capturesPaper: !UIAccessibility.isReduceMotionEnabled, cornerPoint: point)
+            guard started, let transitionID = pending?.transition.id else { return false }
+            interactiveDragActive = true
+            return isActive && pending?.transition.id == transitionID
+        }
         guard makeCornerDrag(direction: direction, at: point, prefersFlatTurn: prefersFlatTurn) != nil else { throw PageTurnError.invalidInteractionPoint }
         try validateTurnStart()
         queuedDiscreteTurns.removeAll(keepingCapacity: false)
@@ -651,7 +678,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         loadViewIfNeeded()
         guard extent.isFinite, extent > 0 else { throw PageTurnError.interactionInProgress }
         let cornerDrag: PaperCornerDrag?
-        if let cornerPoint {
+        if let cornerPoint, paperEffect?.isWholePageMetalEffect != true {
             guard let drag = makeCornerDrag(direction: direction, at: cornerPoint,
                                            prefersFlatTurn: prefersFlatTurn) else { throw PageTurnError.invalidInteractionPoint }
             cornerDrag = drag
@@ -712,6 +739,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let transition = PageTransition(presentationID: presentationID, from: currentPage.identity,
                                         to: page.identity, direction: direction)
         pending = Pending(page: page, transition: transition, cornerDrag: cornerDrag)
+        pending?.effectOrigin = paperEffect?.isWholePageMetalEffect == true ? cornerPoint : nil
         if animationDiagnosticsEnabled {
             let start = diagnosticRequestStart > 0 ? diagnosticRequestStart : CACurrentMediaTime()
             animationDiagnosticTrace = AnimationDiagnosticTrace(id: transition.id, startedAt: start)
@@ -744,7 +772,17 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     public func updateInteractiveTurn(displacement: CGFloat) {
         guard isActive, !deliveringEvents, !requestingPage, !mountingPage, !notifyingAutomaticState,
               pending != nil, !isSettling, displacement.isFinite, extent > 0 else { return }
-        let progress = min(1, max(0, displacement / extent))
+        // 整页 GPU 效果按参考实现减速拖动（火焰／水墨／破冰 0.5×、浪潮 0.6×）；其余效果保持原有映射。
+        // 快速甩动防瞬现：整页效果拖动进度封顶，剩余段由固定时长收尾补完。
+        // 折纸／碎片需要跟手完全折完／碎完，不封顶（甩动时动画在拖动帧内推进，仍可辨）。
+        let raw = min(1, max(0, displacement / extent * (paperEffect?.dragProgressScale ?? 1)))
+        let ceiling: CGFloat
+        switch paperEffect {
+        case .fold, .shatter: ceiling = 1.0
+        case .inkwash, .icecrack, .wave, .burn: ceiling = 0.85
+        default: ceiling = 1
+        }
+        let progress = min(raw, ceiling)
         pending?.progress = progress
         if var drag = pending?.cornerDrag {
             if drag.effect == .arch {
@@ -796,8 +834,10 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 // 仅容忍投影面积求和的浮点误差，不放宽可见半屏阈值。
                 return (paperView?.visibleTargetFraction(for: drag) ?? 0) + 1e-9 >= 0.5
             } ?? false
+            // 整页 GPU 效果的拖动减速后提交门槛同比缩小，保持相同的物理拖动距离。
+            let commitProgress: CGFloat = 0.17 * (paperEffect?.dragProgressScale ?? 1)
             completed = velocity.isFinite && velocity > -500
-                && (velocity >= 500 || pending.progress >= 0.17 || reachesMidpoint)
+                && (velocity >= 500 || pending.progress >= commitProgress || reachesMidpoint)
         } else {
             completed = PageTurnReleasePolicy.shouldComplete(
                 displacement: Double(pending.progress * extent), extent: Double(extent), velocity: Double(velocity))
@@ -929,13 +969,29 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             // 新滑动排在当前收尾之后，保留上一页完整的卷曲与落页过程。
             if pending != nil, !interactiveDragActive {
                 panQueuedWhileTransitioning = true
+                // 快速连滑时水墨／破冰的下一笔从手指位置起墨／起裂，而不是页缘中点。
+                if paperEffect?.originFollowsFinger == true {
+                    let location = pan.location(in: view)
+                    pendingTouchOrigin = CGPoint(x: min(view.bounds.maxX, max(view.bounds.minX, location.x - translation.x)),
+                                                 y: min(view.bounds.maxY, max(view.bounds.minY, location.y - translation.y)))
+                }
                 let sign = velocity == 0 ? position : velocity
                 _ = try? turn(sign * forwardSign > 0 ? .next : .previous, animated: true)
                 return
             }
             panQueuedWhileTransitioning = false
             do {
-                if paperEffect != nil {
+                if paperEffect?.isWholePageMetalEffect == true {
+                    // 整页 GPU 效果：原点=按下的手指位置；方向由速度/位移判定，拖动按参考实现减速。
+                    let location = pan.location(in: view)
+                    let origin = CGPoint(x: min(view.bounds.maxX, max(view.bounds.minX, location.x - translation.x)),
+                                         y: min(view.bounds.maxY, max(view.bounds.minY, location.y - translation.y)))
+                    let sense = velocity == 0 ? position : velocity
+                    let direction: PageTurnDirection = sense * forwardSign > 0 ? .next : .previous
+                    if try beginInteractiveTurn(direction, at: origin) {
+                        updateInteractiveTurn(displacement: position * (direction == .next ? forwardSign : -forwardSign))
+                    }
+                } else if paperEffect != nil {
                     let location = pan.location(in: view)
                     let origin = CGPoint(x: min(view.bounds.maxX, max(view.bounds.minX, location.x - translation.x)),
                                          y: min(view.bounds.maxY, max(view.bounds.minY, location.y - translation.y)))
@@ -959,6 +1015,12 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             } catch { pan.isEnabled = false; pan.isEnabled = isActive && suspensionReasons.isEmpty }
         case .changed, .ended:
             if panQueuedWhileTransitioning {
+                // 排队中的水墨／破冰：触点持续刷新，下一笔从手指最新位置起墨／起裂。
+                if paperEffect?.originFollowsFinger == true {
+                    let location = pan.location(in: view)
+                    pendingTouchOrigin = CGPoint(x: min(view.bounds.maxX, max(view.bounds.minX, location.x)),
+                                                 y: min(view.bounds.maxY, max(view.bounds.minY, location.y)))
+                }
                 if pan.state == .ended { panQueuedWhileTransitioning = false }
                 return
             }
@@ -967,6 +1029,14 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 updateInteractiveTurn(to: CGPoint(x: drag.origin.x + view.bounds.minX + translation.x,
                                                    y: drag.origin.y + view.bounds.minY + translation.y), tracksPanAngle: true)
             } else {
+                // 水墨／破冰：动画原点直接取当前手指位置，融霜／落墨始终发生在手指所在处。
+                if paperEffect?.originFollowsFinger == true {
+                    var moved = pending
+                    let location = pan.location(in: view)
+                    moved.effectOrigin = CGPoint(x: min(view.bounds.maxX, max(view.bounds.minX, location.x)),
+                                                 y: min(view.bounds.maxY, max(view.bounds.minY, location.y)))
+                    self.pending = moved
+                }
                 updateInteractiveTurn(displacement: position * (pending.transition.direction == .next ? forwardSign : -forwardSign))
             }
             if pan.state == .ended {
@@ -996,6 +1066,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 return
             }
             let hasNativePresentation = paperView?.hasLiveNativeCornerPresentation == true
+                || paperView?.hasLiveNativePagePresentation == true
             let usesNativeRelease = usesDisplayLinkForPaperAnimation && hasNativePresentation
             let cornerStart: PaperCornerDrag?
             if let live = pending?.cornerDrag {
@@ -1011,7 +1082,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             let progress = usesNativeRelease ? (cornerStart?.gestureProgress ?? logicalProgress) : logicalProgress
             let target: CGFloat = completed ? 1 : 0
             let baseDuration = min(completed ? 0.36 : 0.28, 0.12 + Double(abs(target - progress)) * 0.24)
+            // 整页 GPU 效果按参考实现的整页播放时长收尾（火焰约 630ms、故障约 1.07s、浪潮约 850ms 等）。
             let duration = baseDuration * (cornerStart == nil || pending?.isDiscreteTurn == true ? 1 : 1.2) * transitionDurationScale
+                * (paperEffect?.releaseDurationScale ?? 1)
             let waitsForGPU = cornerStart != nil && usesNativeRelease
             let cornerIntent = usesNativeRelease && completed ? pending?.cornerDrag : nil
             let frameGate = PaperReleaseFrameGate(waitsForGPU: waitsForGPU,
@@ -1132,7 +1205,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             guard matchesPageLayout(transitionID, currentView: currentView) else { return }
             if paperView.frame != view.bounds { paperView.frame = view.bounds }
             guard matchesPageLayout(transitionID, currentView: currentView), self.paperView === paperView else { return }
-            paperView.update(progress: pending.progress, cornerDrag: pending.cornerDrag, followsTouch: !isSettling)
+            paperView.update(progress: pending.progress, pageOrigin: pending.effectOrigin,
+                             cornerDrag: pending.cornerDrag, followsTouch: !isSettling)
             return
         }
         currentView.frame = view.bounds
@@ -1152,7 +1226,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 guard matchesPageLayout(transitionID, currentView: currentView) else { return }
                 paperView.frame = view.bounds
                 guard matchesPageLayout(transitionID, currentView: currentView), self.paperView === paperView else { return }
-                paperView.update(progress: pending.progress, cornerDrag: pending.cornerDrag, followsTouch: !isSettling)
+                paperView.update(progress: pending.progress, pageOrigin: pending.effectOrigin,
+                                 cornerDrag: pending.cornerDrag, followsTouch: !isSettling)
             }
         } else if usesSlide {
             let sign: CGFloat = pending.transition.direction == .next ? forwardSign : -forwardSign
@@ -1267,7 +1342,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                                               spine: configuration.resolvedSpine, options: configuration.paper,
                                               axis: axis, readingOrder: configuration.readingOrder,
                                               cornerDriven: pending?.cornerDrag != nil,
-                                              cachedCurrent: reused?.image, cachedCurrentTexture: reused?.texture)
+                                              cachedCurrent: reused?.image, cachedCurrentTexture: reused?.texture,
+                                              effectOrigin: pending?.effectOrigin)
         guard canAttach(transitionID: transition.id) else { overlay.invalidateResources(); return false }
         guard view.bounds.size == size else { overlay.invalidateResources(); throw PageTurnError.snapshotUnavailable }
         paperSnapshotCaptureCount += overlay.didReuseCurrentSnapshot ? 1 : 2
@@ -1279,6 +1355,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         }
         paperView = overlay
         overlay.setMetalPresentationMetricsEnabled(animationDiagnosticsEnabled)
+        overlay.setPagePresentationMetricsEnabled(animationDiagnosticsEnabled)
         overlay.frame = view.bounds
         view.addSubview(overlay)
         if animationDiagnosticsEnabled {
@@ -1884,15 +1961,28 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         trace.emittedAt = now; trace.event = event
         animationDiagnosticTrace = trace
         animationDiagnosticSequence += 1
-        let presentationTimes = paperView?.metalPresentationTimes ?? []
+        let presentationTimes: [TimeInterval]
+        if paperView?.metalPresentationTimes.isEmpty == false {
+            presentationTimes = paperView?.metalPresentationTimes ?? []
+        } else { presentationTimes = paperView?.pagePresentationTimes ?? [] }
+        // GPU 帧率优先用 drawable 呈现时间戳；样本不足或时间戳不可靠时，
+        // 用本回合提交帧数与首末提交跨度换算（提交节奏与呈现节奏一致）。
         let gpuFPS: Double?
-        if presentationTimes.count > 1, let first = presentationTimes.min(), let last = presentationTimes.max(), last > first {
+        if presentationTimes.count > 1, let first = presentationTimes.min(), let last = presentationTimes.max(), last - first > 0.05 {
             gpuFPS = Double(presentationTimes.count - 1) / (last - first)
+        } else if let span = paperView?.pageMetalSubmissionSpan, span > 0.05,
+                  let submitted = paperView?.pageMetalSubmittedFrameCount, submitted > 1 {
+            gpuFPS = Double(submitted - 1) / span
         } else { gpuFPS = nil }
         #if targetEnvironment(simulator)
         let presentationCount: Int? = nil
         #else
-        let presentationCount: Int? = paperView?.usesMetalCornerRendering == true ? paperView?.metalPresentationCount : nil
+        let presentationCount: Int?
+        if paperView?.usesMetalCornerRendering == true {
+            presentationCount = paperView?.metalPresentationCount
+        } else if paperView?.usesMetalPageRendering == true {
+            presentationCount = paperView?.pageMetalSubmittedFrameCount
+        } else { presentationCount = nil }
         #endif
         let requested = paperClock.isRunning ? Int(paperClock.activeFrameRateRange?.preferred ?? 0)
             : paperView?.nativeRequestedFramesPerSecond

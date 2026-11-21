@@ -221,6 +221,13 @@ final class CoreTests: XCTestCase {
             .paged(effect: .slide, axis: .horizontal), .paged(effect: .slide, axis: .vertical),
             .paged(effect: .curl, axis: .horizontal), .paged(effect: .arch, axis: .horizontal),
             .paged(effect: .curl, axis: .vertical), .paged(effect: .arch, axis: .vertical),
+            .paged(effect: .burn, axis: .horizontal), .paged(effect: .burn, axis: .vertical),
+            .paged(effect: .glitch, axis: .horizontal), .paged(effect: .glitch, axis: .vertical),
+            .paged(effect: .fold, axis: .horizontal), .paged(effect: .fold, axis: .vertical),
+            .paged(effect: .shatter, axis: .horizontal), .paged(effect: .shatter, axis: .vertical),
+            .paged(effect: .inkwash, axis: .horizontal), .paged(effect: .inkwash, axis: .vertical),
+            .paged(effect: .icecrack, axis: .horizontal), .paged(effect: .icecrack, axis: .vertical),
+            .paged(effect: .wave, axis: .horizontal), .paged(effect: .wave, axis: .vertical),
             .paged(effect: .cover, axis: .horizontal), .continuous(axis: .vertical)
         ]
         XCTAssertEqual(PageTurnConfiguration.supportedPresentations.count, expected.count)
@@ -228,7 +235,8 @@ final class CoreTests: XCTestCase {
             XCTAssertTrue(PageTurnConfiguration.supportedPresentations.contains(presentation))
         }
         for axis in [PageTurnAxis.horizontal, .vertical] {
-            for effect in [PageTurnEffect.none, .slide, .cover, .curl, .arch] {
+            for effect in [PageTurnEffect.none, .slide, .cover, .curl, .arch, .burn,
+                           .glitch, .fold, .shatter, .inkwash, .icecrack, .wave] {
                 let presentation = PageTurnPresentation.paged(effect: effect, axis: axis)
                 let configuration = PageTurnConfiguration(presentation: presentation)
                 if expected.contains(presentation) {

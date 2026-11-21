@@ -105,7 +105,9 @@ final class FullScreenReaderDemoViewController: UIViewController, UIGestureRecog
     var canvasTapOwner = CanvasTapOwner.unassigned
     var savedIndex = 0
     var didStart = false
-    let settingsKey = "fullscreen.reader.settings.v1"
+    /// v2：快照预算默认改为机型自适应（DemoSnapshotBudget）。v1 存档不含自适应语义，
+    /// 升级时整份忽略一次，用户重新「应用」即按新默认值持久化；不写针对旧值的迁移特例。
+    let settingsKey = "fullscreen.reader.settings.v2"
     let sourceKey = "fullscreen.reader.source.v1"
 
     override var prefersStatusBarHidden: Bool { true }
@@ -141,10 +143,15 @@ final class FullScreenReaderDemoViewController: UIViewController, UIGestureRecog
         navigationBackdrop.isHidden = true; bottomMenu.isHidden = true
         navigationBackdrop.alpha = 0; bottomMenu.alpha = 0
         automaticIntent = settings.automaticMode == "manual" || settings.automaticMode == "external" ? "stopped" : "paused"
-        // 无人值守录制：--curl-autoplay 用定时翻页连续驱动本库 curl，便于与系统仿真逐帧对比。
+        // 无人值守录制：--curl-autoplay／--burn-autoplay 用定时翻页连续驱动对应效果，便于逐帧对比与截图验收。
         if ProcessInfo.processInfo.arguments.contains("--curl-autoplay") {
             settings.automaticMode = "timed"; settings.pageInterval = 0.45; automaticIntent = "playing"
             settings.effect = "curl"; settings.axis = "horizontal"
+            settings.motion = "wholePage"; settings.pageLayout = "single"; settings.spine = "automatic"
+        }
+        if ProcessInfo.processInfo.arguments.contains("--burn-autoplay") {
+            settings.automaticMode = "timed"; settings.pageInterval = 0.45; automaticIntent = "playing"
+            settings.effect = "burn"; settings.axis = "horizontal"
             settings.motion = "wholePage"; settings.pageLayout = "single"; settings.spine = "automatic"
         }
         NotificationCenter.default.addObserver(self, selector: #selector(savePosition), name: UIApplication.willResignActiveNotification, object: nil)
@@ -188,7 +195,7 @@ final class FullScreenReaderDemoViewController: UIViewController, UIGestureRecog
         navigationBar.accessibilityIdentifier = "reader-navigation-bar"
         let appearance = UINavigationBarAppearance(); appearance.configureWithTransparentBackground()
         navigationBar.standardAppearance = appearance; navigationBar.scrollEdgeAppearance = appearance
-        let item = UINavigationItem(title: FullScreenDemoContentFactory.articleTitle)
+        let item = UINavigationItem(title: FullScreenDemoContentFactory.articleTitle + " · M14")
         item.leftBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "chevron.down"), style: .plain, target: self, action: #selector(hideControls))
         item.leftBarButtonItem?.accessibilityLabel = "隐藏菜单"; item.leftBarButtonItem?.accessibilityIdentifier = "reader-hide-menu"
         item.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "slider.horizontal.3"), style: .plain, target: self, action: #selector(openSettings))

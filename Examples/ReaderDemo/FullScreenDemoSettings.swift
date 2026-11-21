@@ -1,6 +1,26 @@
 import UIKit
 import BonePageTurnKit
 
+/// Demo 通用的机型自适应快照预算：按主屏幕两页原生像素合计 ×1.1 估算，
+/// 钳制到 PaperRenderingOptions 合法区间。跟随实际屏幕能力，不做设备型号表；
+/// iPhone Duo 折叠态／展开态切换后重新「应用」即可刷新（SDK 的 snapshotPlan
+/// 仍按实际 bounds 收敛，预算不足只会降采样，不会失败）。
+enum DemoSnapshotBudget {
+    /// 纯函数：由调用方传入屏幕点尺寸与倍率，任意上下文可用。
+    static func recommended(width: Double, height: Double, scale: Double) -> Int {
+        let s = max(1, scale)
+        let need = width * height * s * s * 2
+        return min(16_777_216, max(65_536, Int((need * 1.1).rounded())))
+    }
+
+    /// 当前主屏幕的自适应预算；在主线程使用。
+    static var recommended: Int {
+        let bounds = UIScreen.main.bounds
+        return recommended(width: Double(bounds.width), height: Double(bounds.height),
+                           scale: Double(UIScreen.main.scale))
+    }
+}
+
 /// 独立阅读示例的可保存输入；只保存值，不拥有阅读器、计时器或渲染资源。
 struct FullScreenDemoSettings: Codable, Equatable {
     var effect: String = "slide"
@@ -38,7 +58,9 @@ struct FullScreenDemoSettings: Codable, Equatable {
     var initialZoom: Double = 1
     var handoffThreshold: Double = 18
     var allowPagingWhileZoomed: Bool = false
-    var paperPixels: Int = 4_194_304
+    /// 机型自适应默认值：两页原生像素 ×1.1（DemoSnapshotBudget.recommended），
+    /// iPhone 18、iPhone Duo 折叠屏、iPad 及未来机型自动覆盖，不做设备型号表。
+    var paperPixels: Int = DemoSnapshotBudget.recommended
     var paperStrips: Int = 128
     var coverCorner: Double = 36
     var shadowOpacity: Double = 0.32
@@ -78,6 +100,13 @@ struct FullScreenDemoSettings: Codable, Equatable {
         case "cover": return .cover
         case "curl": return .curl
         case "arch": return .arch
+        case "burn": return .burn
+        case "glitch": return .glitch
+        case "fold": return .fold
+        case "shatter": return .shatter
+        case "inkwash": return .inkwash
+        case "icecrack": return .icecrack
+        case "wave": return .wave
         default: preconditionFailure("请先校验翻页效果")
         }
     }
@@ -265,8 +294,8 @@ private extension FullScreenDemoSettings {
         if pageLayout != "single", motion != "wholePage" {
             throw SettingsError(message: "当前双页与自适应示例需要整页运动：每侧阅读外壳通过公开双页容器组合。请选择“整页运动”。")
         }
-        if ["cover", "curl", "arch"].contains(effect), motion != "wholePage" {
-            throw SettingsError(message: "覆盖、卷曲和拱形翻页需要整页运动，包括背景、页眉和页脚。")
+        if ["cover", "curl", "arch", "burn", "glitch", "fold", "shatter", "inkwash", "icecrack", "wave"].contains(effect), motion != "wholePage" {
+            throw SettingsError(message: "覆盖、卷曲、拱形与整页 GPU 翻页需要整页运动，包括背景、页眉和页脚。")
         }
         if pageLayout == "adaptive", spine != "automatic" {
             throw SettingsError(message: "自适应布局会在单页与双页之间切换，两者可用书脊不同。此示例要求选择“自动书脊”，并分别验证两种形态。")
@@ -288,9 +317,12 @@ private extension FullScreenDemoSettings {
     func checkedConfiguration(layout: ReaderPageLayout) throws -> PageTurnConfiguration {
         let presentation: PageTurnPresentation = effect == "continuous"
             ? .continuous(axis: sdkAxis) : .paged(effect: sdkEffect, axis: sdkAxis)
+        var paper = PaperRenderingOptions(
+            maximumSnapshotPixels: paperPixels,
+            stripCount: paperStrips)
         let configuration = PageTurnConfiguration(
             presentation: presentation, spine: sdkSpine,
-            paper: .init(maximumSnapshotPixels: paperPixels, stripCount: paperStrips),
+            paper: paper,
             layout: layout, readingOrder: sdkOrder,
             cover: .init(cornerRadius: coverCorner, shadowOpacity: shadowOpacity,
                          shadowRadius: shadowRadius, shadowOffsetX: shadowX, shadowOffsetY: shadowY))
@@ -351,7 +383,10 @@ extension FullScreenDemoSettings {
         .init(title: "翻页布局", hint: "可以先修改多个选项再应用。连续阅读需要纵向、单页、仅正文运动；覆盖与纸张效果需要整页运动。", fields: [
             .init("effect", "翻页效果", "覆盖翻页仅支持横向。", .choice(\.effect, [
                 .init("none", "无动画"), .init("slide", "平移"), .init("cover", "覆盖"),
-                .init("curl", "卷曲纸张"), .init("arch", "拱形纸张"), .init("continuous", "连续阅读")])),
+                .init("curl", "卷曲纸张"), .init("arch", "拱形纸张"), .init("burn", "火焰烧穿"),
+                .init("glitch", "电视故障"), .init("fold", "折纸翻页"), .init("shatter", "碎片飞散"),
+                .init("inkwash", "水墨晕染"), .init("icecrack", "破冰融霜"), .init("wave", "浪潮"),
+                .init("continuous", "连续阅读")])),
             .init("axis", "翻页方向", .choice(\.axis, [.init("horizontal", "横向"), .init("vertical", "纵向")])),
             .init("readingOrder", "阅读顺序", "纵向内容始终从上到下。", .choice(\.readingOrder, [.init("ltr", "从左到右"), .init("rtl", "从右到左")])),
             .init("pageLayout", "页面布局", "双页与自适应需要整页运动。", .choice(\.pageLayout, [.init("single", "单页"), .init("spread", "双页"), .init("adaptive", "自适应")])),

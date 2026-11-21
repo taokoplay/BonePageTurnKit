@@ -29,7 +29,22 @@ final class PaperTransitionView: UIView {
     private let cornerDriven: Bool
     private var metalRenderer: PaperCornerMetalRenderer?
     private var metalView: PaperCornerMetalView?
+    /// 整页 GPU 效果（火焰烧穿／电视故障／折纸／碎片／水墨／破冰／浪潮）共用的渲染器与图层。
+    private var effectMetalRenderer: PaperEffectMetalRenderer?
+    private var effectMetalView: PaperEffectMetalView?
     var usesMetalCornerRendering: Bool { metalRenderer?.isActive == true }
+    /// 当前效果是否由整页 GPU 图层渲染。
+    var usesMetalPageRendering: Bool { effectMetalRenderer != nil }
+    /// 原生收尾可以驱动整页 GPU 图层的条件：图层已挂窗。
+    var hasLiveNativePagePresentation: Bool { effectMetalView?.window != nil }
+    /// 整页 GPU 图层的已提交帧数。
+    var pageMetalSubmittedFrameCount: Int { effectMetalView?.submittedFrameCount ?? 0 }
+    /// 整页 GPU 图层的逐帧呈现时间（诊断开启时采集）。
+    var pagePresentationTimes: [TimeInterval] { effectMetalView?.presentedTimes ?? [] }
+    /// 整页 GPU 图层的首末提交帧跨度（秒）；呈现时间戳不可靠时的 GPU 帧率兜底。
+    var pageMetalSubmissionSpan: TimeInterval? { effectMetalView?.submissionSpan }
+    /// 开关整页 GPU 图层的呈现指标采集。
+    func setPagePresentationMetricsEnabled(_ enabled: Bool) { effectMetalView?.collectsPresentationMetrics = enabled }
     var metalSubmittedFrameCount: Int { metalRenderer?.submittedFrameCount ?? 0 }
     var nativeCornerSubmittedFrameCount: Int { metalView?.submittedFrameCount ?? 0 }
     /// 最后成功提交到原生 GPU 的纸面；没有屏幕提交时为 nil，离屏验收仍使用逻辑触点。
@@ -61,11 +76,15 @@ final class PaperTransitionView: UIView {
     /// 原生收尾与 Metal 提交共享一个刷新时钟；返回 false 时调用方保留旧驱动。
     @discardableResult
     func driveNativeRelease(_ advance: @escaping (TimeInterval) -> Void) -> Bool {
+        if let effectMetalView {
+            effectMetalView.beforeRender = advance
+            return true
+        }
         guard hasLiveNativeCornerPresentation, let metalView else { return false }
         metalView.beforeRender = advance
         return true
     }
-    var isNativeReleaseClockRunning: Bool { metalView?.drivesNativeRelease ?? false }
+    var isNativeReleaseClockRunning: Bool { metalView?.drivesNativeRelease ?? false || effectMetalView?.drivesNativeRelease ?? false }
 
     /// 目标页已显示的占比；原生窗口采用最后提交姿态，首帧未提交时不推断隐形进度。
     /// 只用于单页触点 curl 的松手判定；双页与非触点路径保持原来的完成策略。
@@ -85,8 +104,10 @@ final class PaperTransitionView: UIView {
     /// 当前持有的两张原始快照的实际像素总数；释放后为零。
     private(set) var snapshotPixelCount = 0
     var hasResources: Bool {
-        currentImage != nil && targetImage != nil && (cornerDriven || (!strips.isEmpty &&
-            (spine != .center || backStrips.count == strips.count)))
+        guard currentImage != nil, targetImage != nil else { return false }
+        if effect.isWholePageMetalEffect { return effectMetalRenderer != nil }
+        return cornerDriven || (!strips.isEmpty &&
+            (spine != .center || backStrips.count == strips.count))
     }
     /// 实际材料条数；中央双页每条另有对应的真实背面，不重复计数。
     var stripCount: Int { hasResources && cornerDriven ? requestedStripCount : strips.count }
@@ -106,9 +127,10 @@ final class PaperTransitionView: UIView {
          options: PaperRenderingOptions, axis: PageTurnAxis = .horizontal,
          readingOrder: ReaderReadingOrder = .leftToRight, cornerDriven: Bool = false,
          cachedCurrent: CGImage? = nil,
-         cachedCurrentTexture: PaperCornerMetalRenderer.TextureSnapshot? = nil) throws {
+         cachedCurrentTexture: PaperCornerMetalRenderer.TextureSnapshot? = nil,
+         effectOrigin: CGPoint? = nil) throws {
         try options.validate()
-        guard effect == .curl || effect == .arch else { throw PageTurnError.unsupportedPresentation }
+        guard effect == .curl || effect == .arch || effect.isWholePageMetalEffect else { throw PageTurnError.unsupportedPresentation }
         let size = currentView.bounds.size
         guard Self.validBounds(currentView.bounds), Self.validBounds(targetView.bounds),
               size == targetView.bounds.size else { throw PageTurnError.snapshotUnavailable }
@@ -142,8 +164,8 @@ final class PaperTransitionView: UIView {
         let landing = direction == .next ? target : current
         let prepared: [PreparedStrip]
         let preparedBack: [PreparedStrip]
-        if cornerDriven {
-            // GPU 直接采样两张完整纹理，无需为本次触点翻页预裁 128 份 CGImage。
+        if effect.isWholePageMetalEffect || cornerDriven {
+            // 整页 GPU 效果只用两张整页位图；GPU 路径直接采样完整纹理，均无需预裁 128 份 CGImage。
             prepared = []; preparedBack = []
         } else if spine == .center {
             let minimum = PaperSpreadGeometry.frontIsMinimum(axis: axis, readingOrder: readingOrder)
@@ -175,6 +197,19 @@ final class PaperTransitionView: UIView {
         clipsToBounds = true
         backgroundColor = Self.paperColor(for: currentView)
         overrideUserInterfaceStyle = currentView.traitCollection.userInterfaceStyle
+        if effect.isWholePageMetalEffect {
+            // 无触点时沿用参考实现的默认原点（火焰起火点、水墨落墨点、破冰裂源）。
+            let origin = effectOrigin ?? CGPoint(x: size.width * 0.79, y: size.height * 0.565)
+            if PaperEffectMetalRenderer.isSupported,
+               let renderer = try? PaperEffectMetalRenderer(current: current, target: target, size: size,
+                   effect: effect, direction: direction, axis: axis, origin: origin) {
+                effectMetalRenderer = renderer
+                let display = PaperEffectMetalView(renderer: renderer, frame: CGRect(origin: .zero, size: size))
+                display.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                addSubview(display)
+                effectMetalView = display
+            }
+        }
         if cornerDriven, PaperCornerMetalRenderer.isSupported {
             metalRenderer = try PaperCornerMetalRenderer(current: current, target: target, size: size,
                 axis: axis, spread: spine == .center, strips: options.stripCount, paperColor: cornerPaperColor,
@@ -189,10 +224,15 @@ final class PaperTransitionView: UIView {
 
     /// - Parameters: progress: 逻辑进度；cornerDrag: 二维姿态；followsTouch: 原生拖动呈现轻缓，收尾或离屏参考直接对齐。
     /// - Returns: 无返回值。
-    func update(progress: CGFloat, cornerDrag: PaperCornerDrag? = nil, followsTouch: Bool = false) {
+    func update(progress: CGFloat, pageOrigin: CGPoint? = nil, cornerDrag: PaperCornerDrag? = nil, followsTouch: Bool = false) {
         guard progress.isFinite else { return }
         self.progress = min(1, max(0, progress))
         self.cornerDrag = cornerDrag
+        if effect.isWholePageMetalEffect {
+            // 水墨／破冰的原点跟随手指；火焰等固定原点效果每次收到同一原点。
+            effectMetalView?.setProgress(self.progress, origin: pageOrigin)
+            return
+        }
         if let renderer = metalRenderer, let cornerDrag {
             let display: PaperCornerMetalView
             if let metalView { display = metalView }
@@ -216,6 +256,8 @@ final class PaperTransitionView: UIView {
     func invalidateResources() {
         metalView?.invalidate(); metalView?.removeFromSuperview(); metalView = nil
         metalRenderer?.invalidate(); metalRenderer = nil
+        effectMetalView?.invalidate(); effectMetalView?.removeFromSuperview(); effectMetalView = nil
+        effectMetalRenderer = nil
         currentImage = nil
         targetImage = nil
         strips.removeAll(keepingCapacity: false)
@@ -242,6 +284,11 @@ final class PaperTransitionView: UIView {
         if metalView != nil {
             // Metal 子层负责动态纸面；父层仅保留一次静态底图，避免同时运行 CPU 逐帧绘制。
             Self.drawImage(current, in: page, context: context); return
+        }
+        if effect.isWholePageMetalEffect {
+            // GPU 图层负责动态纸面；父层只保留一次静态底图。
+            Self.drawImage(current, in: page, context: context)
+            return
         }
         if effect == .arch, let cornerDrag {
             drawDirectionalArch(cornerDrag, current: current, target: target, page: page, context: context)

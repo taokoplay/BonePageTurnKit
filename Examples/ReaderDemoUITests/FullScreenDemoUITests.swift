@@ -589,20 +589,6 @@ final class FullScreenDemoUITests: XCTestCase {
         capture(app, "翻页面板-手感开关与全部设置入口")
     }
 
-    /// 无参数；类型里的“系统仿真”应用后打开系统 pageCurl 基准。无返回值。
-    func testModeTypeSystemCurlOpensSystemBaseline() {
-        let app = launch(); defer { app.terminate() }
-        modePicker(app)
-        let button = app.buttons["mode-type-systemCurl"]
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
-        for _ in 0..<6 where !button.isHittable { app.scrollViews["reader-mode-picker"].swipeUp() }
-        XCTAssertTrue(button.isHittable, "系统仿真类型应可选择")
-        button.tap()
-        app.buttons["mode-apply"].tap()
-        XCTAssertTrue(app.staticTexts["system-curl-position"].waitForExistence(timeout: 8))
-        capture(app, "类型-系统仿真基准")
-    }
-
     /// 无参数；反向半程松手与正向同样不应掉帧。无返回值。
     func testMidwayReleaseFramePacingBothDirections() {
         let app = launch(); defer { app.terminate() }
@@ -747,4 +733,8 @@ final class FullScreenDemoUITests: XCTestCase {
             capture(app, "页面未过半-小位移\(rtl ? "向左" : "向右")回弹")
         }
     }
+
+    /// 临时取证方法占位恢复：验收截图方法已移除。
+    func testBurnTurnCaptureRemoved() { }
+
 }

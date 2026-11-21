@@ -10,7 +10,7 @@
 
 | 概念 | 候选类型 | 含义 |
 | --- | --- | --- |
-| 动画效果 | PageTurnEffect | 页面切换时如何呈现：无效果、平移、覆盖、仿真、拱页 |
+| 动画效果 | PageTurnEffect | 页面切换时如何呈现：无效果、平移、覆盖、仿真、拱页、火焰烧穿、电视故障、折纸翻页、碎片飞散、水墨晕染、破冰融霜、浪潮（整页 GPU 效果见 [PageMetalEffects](PageMetalEffects.md)） |
 | 翻动轴向 | PageTurnAxis | 手势/位移沿水平还是垂直轴运行 |
 | 展示模式 | PageTurnPresentation | 固定分页，或可以停在任意正文位置的连续滚动 |
 

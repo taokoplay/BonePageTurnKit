@@ -29,8 +29,11 @@ final class PaperTransitionViewTests: XCTestCase {
         }
 
         var averageBrightness: Double {
-            let sum = stride(from: 0, to: bytes.count, by: 4).reduce(0.0) { partial, offset in
-                partial + Double(bytes[offset]) + Double(bytes[offset + 1]) + Double(bytes[offset + 2])
+            var sum = 0.0
+            var offset = 0
+            while offset + 2 < bytes.count {
+                sum += Double(bytes[offset]) + Double(bytes[offset + 1]) + Double(bytes[offset + 2])
+                offset += 4
             }
             return sum / Double(width * height * 3)
         }

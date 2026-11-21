@@ -6,7 +6,7 @@ import os
 extension FullScreenReaderDemoViewController {
     /// - Parameters: effect: 效果；axis: 轴向。返回简短中文名称。
     func modeTitle(_ effect: String, axis: String) -> String {
-        let labels = ["none": "无动画", "slide": "平移", "cover": "覆盖", "curl": "仿真", "arch": "拱页", "continuous": "连续滚屏"]
+        let labels = ["none": "无动画", "slide": "平移", "cover": "覆盖", "curl": "仿真", "arch": "拱页", "burn": "火焰", "glitch": "故障", "fold": "折纸", "shatter": "碎片", "inkwash": "水墨", "icecrack": "破冰", "wave": "浪潮", "continuous": "连续滚屏"]
         return effect == "continuous" ? "连续滚屏" : "\(axis == "horizontal" ? "横向" : "纵向")\(labels[effect] ?? effect)"
     }
 
@@ -18,11 +18,6 @@ extension FullScreenReaderDemoViewController {
             self.automaticIntent = "stopped"
             self.persistSettings(); self.setControlsVisible(false)
             return nil
-        } onSystemCurl: { [weak self] in
-            // 系统仿真不经过 SDK 事务，直接在阅读页上打开对照视图。
-            guard let self else { return }
-            self.setControlsVisible(false)
-            self.present(SystemCurlDemoViewController(), animated: true)
         }
         let navigation = UINavigationController(rootViewController: picker)
         navigation.modalPresentationStyle = .pageSheet
@@ -70,11 +65,6 @@ extension FullScreenReaderDemoViewController {
             ("简单对话框", { [weak self] in self?.showSimpleDialog() }),
             ("帧率诊断（翻页时观察）", { [weak self] in self?.toggleFrameMonitor() }),
             ("复制动画诊断日志", { [weak self] in self?.copyAnimationDiagnostics() }),
-            ("系统仿真对比（pageCurl）", { [weak self] in
-                guard let self else { return }
-                self.setControlsVisible(false)
-                self.present(SystemCurlDemoViewController(), animated: true)
-            }),
             ("半翻预览 50%", { [weak self] in self?.previewTurn() }),
             ("完成当前翻页", { [weak self] in self?.scene?.paged?.endInteractiveTurn(velocity: 600, animated: self?.settings.animated ?? true) }),
             ("取消当前翻页", { [weak self] in self?.scene?.paged?.cancelTransition() }),
@@ -317,7 +307,7 @@ private final class FullScreenDemoDiagnosticsController: UIViewController {
 @MainActor
 private final class FullScreenDemoModePickerController: UIViewController {
     private enum PageType: String, CaseIterable {
-        case none, slide, cover, curl, systemCurl, arch, continuous
+        case none, slide, cover, curl, arch, burn, glitch, fold, shatter, inkwash, icecrack, wave, continuous
 
         var title: String {
             switch self {
@@ -325,8 +315,14 @@ private final class FullScreenDemoModePickerController: UIViewController {
             case .slide: return "平移"
             case .cover: return "覆盖"
             case .curl: return "仿真"
-            case .systemCurl: return "系统仿真"
             case .arch: return "拱页"
+            case .burn: return "火焰烧穿"
+            case .glitch: return "电视故障"
+            case .fold: return "折纸翻页"
+            case .shatter: return "碎片飞散"
+            case .inkwash: return "水墨晕染"
+            case .icecrack: return "破冰融霜"
+            case .wave: return "浪潮"
             case .continuous: return "连续滚动"
             }
         }
@@ -336,14 +332,20 @@ private final class FullScreenDemoModePickerController: UIViewController {
             case .slide: return "rectangle.on.rectangle"
             case .cover: return "square.stack"
             case .curl: return "book"
-            case .systemCurl: return "book.pages"
             case .arch: return "book.closed"
+            case .burn: return "flame"
+            case .glitch: return "tv"
+            case .fold: return "square.split.2x1"
+            case .shatter: return "hexagon"
+            case .inkwash: return "drop"
+            case .icecrack: return "snowflake"
+            case .wave: return "water.waves"
             case .continuous: return "scroll"
             }
         }
         var fixedAxis: String? {
             switch self {
-            case .cover, .systemCurl: return "horizontal"
+            case .cover: return "horizontal"
             case .continuous: return "vertical"
             default: return nil
             }
@@ -351,8 +353,14 @@ private final class FullScreenDemoModePickerController: UIViewController {
         var hint: String {
             switch self {
             case .cover: return "覆盖仅支持横向，页面整体移动。"
+            case .burn: return "火焰烧穿：多点火孔烧穿旧页并直露相邻页；水墨／破冰从触点开始，触点随手指移动。"
+            case .glitch: return "电视故障：横条错位与扫描雪花逐段交接；上一页播放整段镜像动画。"
+            case .fold: return "折纸翻页：四道折面收拢，折线明暗交替；反向播放整体镜像。"
+            case .shatter: return "碎片飞散：碎片沿翻页方向飞散坠落，回拉沿原路飞回。"
+            case .inkwash: return "水墨晕染：从触点洇开湿墨，中心退墨显露下一页文字。"
+            case .icecrack: return "破冰融霜：冰缝从触点放射蔓延，冰块逐块剥落；手指移到哪里融到哪里。"
+            case .wave: return "浪潮：浪锋沿翻页方向整幅推进，浪头白沫翻滚，水面下显露下一页。"
             case .curl, .arch: return "支持两个方向，页面整体移动。"
-            case .systemCurl: return "系统 UIPageViewController 的 pageCurl，只作对照，不经过 SDK 翻页事务。"
             case .continuous: return "连续滚动仅支持纵向，使用单页正文滚动并关闭图片缩放。"
             case .none, .slide: return "支持两个方向；“仅正文运动”等选项可在阅读设置中调整。"
             }
@@ -361,7 +369,6 @@ private final class FullScreenDemoModePickerController: UIViewController {
 
     private let original: FullScreenDemoSettings
     private let onApply: (FullScreenDemoSettings) -> String?
-    private let onSystemCurl: (() -> Void)?
     private var selectedType: PageType
     private var selectedAxis: String
     private let directionControl = UISegmentedControl(items: ["横向", "纵向"])
@@ -373,13 +380,12 @@ private final class FullScreenDemoModePickerController: UIViewController {
     private let panSwitch = UISwitch()
 
     /// - Parameters: settings: 当前已验证配置；onApply: 安装选择，失败返回原因并保留面板。
-    init(settings: FullScreenDemoSettings, onApply: @escaping (FullScreenDemoSettings) -> String?,
-         onSystemCurl: (() -> Void)? = nil) {
+    init(settings: FullScreenDemoSettings, onApply: @escaping (FullScreenDemoSettings) -> String?) {
         guard let type = PageType(rawValue: settings.effect) else {
             preconditionFailure("翻页面板需要已验证的类型")
         }
         original = settings; selectedType = type; selectedAxis = settings.axis
-        self.onApply = onApply; self.onSystemCurl = onSystemCurl
+        self.onApply = onApply
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -541,7 +547,7 @@ private final class FullScreenDemoModePickerController: UIViewController {
         switch selectedType {
         case .none, .slide: next.spine = "automatic"
         case .cover: next.spine = "automatic"; next.motion = "wholePage"
-        case .curl, .arch, .systemCurl: next.motion = "wholePage"
+        case .curl, .arch, .burn, .glitch, .fold, .shatter, .inkwash, .icecrack, .wave: next.motion = "wholePage"
         case .continuous:
             next.pageLayout = "single"; next.spine = "automatic"; next.motion = "contentOnly"; next.zoomEnabled = false
         }
@@ -550,10 +556,6 @@ private final class FullScreenDemoModePickerController: UIViewController {
 
     /// 验证并交给宿主安装；无参数及返回值，失败不关闭、不改动当前页面。
     @objc private func apply() {
-        if selectedType == .systemCurl {
-            dismiss(animated: true) { [onSystemCurl] in onSystemCurl?() }
-            return
-        }
         let next = proposedSettings()
         if let message = next.validationMessage() ?? onApply(next) {
             let alert = UIAlertController(title: "无法应用翻页方式", message: message, preferredStyle: .alert)

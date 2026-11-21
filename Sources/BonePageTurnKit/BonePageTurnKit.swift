@@ -1,7 +1,11 @@
 import Foundation
 
 /// 动画效果与几何轴独立；可构造不代表后端已支持。
-public enum PageTurnEffect: Sendable, Equatable { case none, slide, cover, curl, arch }
+public enum PageTurnEffect: Sendable, Equatable {
+    case none, slide, cover, curl, arch
+    /// 整页 GPU 效果：距离场／网格动画由 Metal 片段着色器完成，共用统一渲染器。
+    case burn, glitch, fold, shatter, inkwash, icecrack, wave
+}
 public enum PageTurnAxis: Sendable, Equatable { case horizontal, vertical }
 public enum PageTurnDirection: Sendable, Hashable { case previous, next }
 public enum PageSpinePlacement: Sendable, Equatable { case automatic, minimum, center, maximum }
@@ -74,6 +78,20 @@ public struct PageTurnConfiguration: Sendable, Equatable {
         .paged(effect: .curl, axis: .vertical),
         .paged(effect: .arch, axis: .horizontal),
         .paged(effect: .arch, axis: .vertical),
+        .paged(effect: .burn, axis: .horizontal),
+        .paged(effect: .burn, axis: .vertical),
+        .paged(effect: .glitch, axis: .horizontal),
+        .paged(effect: .glitch, axis: .vertical),
+        .paged(effect: .fold, axis: .horizontal),
+        .paged(effect: .fold, axis: .vertical),
+        .paged(effect: .shatter, axis: .horizontal),
+        .paged(effect: .shatter, axis: .vertical),
+        .paged(effect: .inkwash, axis: .horizontal),
+        .paged(effect: .inkwash, axis: .vertical),
+        .paged(effect: .icecrack, axis: .horizontal),
+        .paged(effect: .icecrack, axis: .vertical),
+        .paged(effect: .wave, axis: .horizontal),
+        .paged(effect: .wave, axis: .vertical),
         .continuous(axis: .vertical)
     ]
 

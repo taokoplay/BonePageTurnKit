@@ -18,6 +18,8 @@ final class DemoSceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     /// - Parameters: scene: 窗口场景；session: 会话；connectionOptions: 启动参数。
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        // 启动阶段预热整页 GPU 效果管线：着色器编译的停顿落在启动画面内，首次翻页不掉帧。
+        PaperEffectMetalWarmup.warmUp()
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         if ProcessInfo.processInfo.arguments.contains("--system-curl") {
