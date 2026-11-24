@@ -373,6 +373,31 @@ struct PaperCornerDrag: Equatable {
         return directed.moved(to: point, direction: direction) ?? base
     }
 
+    /// 点击回翻固定斜向折痕的横跨幅度：占画布横跨边长（横轴为高度、纵轴为宽度）的比例。
+    static let previousTapSlantWeight: CGFloat = 0.30
+    /// 回翻拖动路径的斜度包络峰值：占画布横跨边长的比例，随翻页进度正弦渐入渐出。
+    static let previousDragSlantWeight: CGFloat = 0.24
+
+    /// 点击翻页缺少真实手势斜向意图时使用的固定意图：横跨偏向所选纸角，拱页不受影响。
+    /// - Parameter weight: 横跨幅度占画布横跨边长的比例；默认取点击回翻标准强度。
+    /// - Returns: 仅横跨分量不同、且允许折痕跟随的复制体；起点与落点仍由原收尾定义保证精确。
+    func makingTapSlantIntent(weight: CGFloat = PaperCornerDrag.previousTapSlantWeight) -> Self {
+        var intent = self
+        intent.prefersFlatTurn = false
+        let crossExtent: CGFloat = axis == .horizontal ? canvasSize.height : canvasSize.width
+        let sign: CGFloat
+        if axis == .horizontal {
+            sign = corner.y == page.maxY ? -1 : 1
+        } else {
+            sign = corner.x == page.maxX ? -1 : 1
+        }
+        let bias = max(0, weight) * crossExtent * sign
+        intent.translation = axis == .horizontal
+            ? CGPoint(x: translation.x, y: translation.y + bias)
+            : CGPoint(x: translation.x + bias, y: translation.y)
+        return intent
+    }
+
 }
 
 /// 局部材料多边形及其线性投影；圆柱弧按有限数量切片，平面部分只采样一次。

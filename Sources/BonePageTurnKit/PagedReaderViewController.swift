@@ -78,6 +78,20 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     /// 开启后所有效果立即衔接，且纸张效果（仿真／拱页）把旧收尾层转为幽灵堆叠在上方继续播完：
     /// 快速连点时多个翻页动画同屏叠加，旧动画完整结束、新动画即刻起播；关闭时按队列逐笔完整播放。
     public var handsOverActiveTransitionOnNewIntent = false
+    /// 回翻（上一页）固有斜向折痕强度：占画布横跨边长的比例，0...0.5；默认 0 保持既有贴手契约。
+    /// 大于 0 时左滑与点击回翻的折痕随翻页进度正弦渐入渐出地偏向所选纸角，右滑（下一页）不变。
+    public var previousTurnSlant: CGFloat = 0 {
+        didSet { previousTurnSlant = min(0.5, max(0, previousTurnSlant.isFinite ? previousTurnSlant : 0)) }
+    }
+    /// 正翻（下一页）点击斜向折痕强度：占画布横跨边长的比例，0...0.5；默认 0 保持既有贴手契约。
+    /// 大于 0 时点击下一页的收尾经斜向弧线扫过（贴近系统卷页的斜向卷曲观感），拖动仍自由跟手不斜。
+    public var nextTurnSlant: CGFloat = 0 {
+        didSet { nextTurnSlant = min(0.5, max(0, nextTurnSlant.isFinite ? nextTurnSlant : 0)) }
+    }
+    /// 空闲时预取邻页快照与纹理：落定后的空闲轮提前完成邻页挂载外捕获与纹理上传，
+    /// 点击翻页直接复用，显著缩短点击到动画开始的延迟。
+    /// 预取会额外调用一次 pageProvider（仅空闲时），宿主 provider 需可重入。
+    public var prefetchNeighborSnapshots = false
     public var onReadingStatus: ((ReaderStatus) -> Void)?
     public var onViewportSizeChange: ((CGSize) -> Void)?
     /// 异步更新当前页面统计时必须携带该令牌；提交新页、尺寸变化或统计更新都会换代。
@@ -107,6 +121,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let transition: PageTransition
         var progress: CGFloat = 0
         var cornerDrag: PaperCornerDrag?
+        /// 点击回翻注入的固定斜向折痕意图；收尾中段经过斜向弧线，起点与落点仍由原收尾定义保证。
+        var slantIntent: PaperCornerDrag? = nil
         /// 整页 GPU 效果的原点（页面坐标）：起火点／落墨点／裂源；由触点注入，水墨与破冰随手指移动。
         var effectOrigin: CGPoint? = nil
         var isDiscreteTurn = false
@@ -118,6 +134,19 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     private var paperSnapshotCache: (identity: PageItemIdentity, presentationID: UUID,
                                      size: CGSize, pixels: Int, image: CGImage,
                                      texture: PaperCornerMetalRenderer.TextureSnapshot?, traits: UITraitCollection)?
+    /// 空闲预取的邻页快照；点击翻页按身份、尺寸、预算与外观匹配后直接复用。
+    private struct NeighborPrefetch {
+        let identity: PageItemIdentity
+        let image: CGImage
+        let texture: PaperCornerMetalRenderer.TextureSnapshot?
+        let size: CGSize
+        let pixels: Int
+        let traits: UITraitCollection
+    }
+    private var neighborPrefetches: [NeighborPrefetch] = []
+    private var neighborPrefetchScheduled = false
+    /// 当前待用的邻页预取数量；测试与调试使用。
+    internal var neighborPrefetchCount: Int { neighborPrefetches.count }
     /// 实际发生的页面抓取次数；复用缓存时一次翻页只抓一张。
     private(set) var paperSnapshotCaptureCount = 0
     /// 最近一次是否命中快照缓存；供测试读取。
@@ -202,6 +231,11 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     private var ghostReleases: [GhostReleaseDriver] = []
     /// 当前存活的幽灵收尾层数量；测试与堆叠插入使用。
     internal var ghostReleaseCount: Int { ghostReleases.count }
+    /// 当前交互的角点姿态与回翻斜向意图；供测试验证斜向折痕注入。
+    var interactiveCornerDragForTesting: PaperCornerDrag? { pending?.cornerDrag }
+    var pendingSlantIntentForTesting: PaperCornerDrag? { pending?.slantIntent }
+    /// 当前待用的邻页预取数量；测试使用。
+    var neighborPrefetchCountForTesting: Int { neighborPrefetches.count }
     /// 幽灵接管后的一次 finish 保留 paperView 所有权，不销毁视图。
     private var preserveGhostPaper = false
     private var queuedDiscreteTurns: [PageTurnDirection] = []
@@ -372,6 +406,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         automaticViewVisible = true
         refreshAutomaticReadingState()
         scheduleCurrentPageReplacement()
+        scheduleNeighborPrefetch()
     }
 
     public override func viewWillDisappear(_ animated: Bool) {
@@ -412,6 +447,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         }
         if changed {
             paperSnapshotCache = nil
+            neighborPrefetches.removeAll(keepingCapacity: false)
             metadataToken = PageViewBinding(identity: currentPage.identity, presentationID: presentationID)
             contentRequestToken = PageViewBinding(identity: currentPage.identity, presentationID: presentationID)
             currentPageBinding = PageViewBinding(identity: currentPage.identity, presentationID: presentationID)
@@ -470,8 +506,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             guard queuedDiscreteTurns.count < maximumQueuedDiscreteTurns else { return false }
             recordTurnIntent()
             // 所有效果都立即衔接：上一笔提交后，下一笔在同一主队列轮内复用缓存的上一笔目标页
-            // 快照重建纸面。纸张效果先把仍在播放的收尾层转为幽灵堆叠在新纸面上方继续播完，
-            // 快速连点时新旧翻页动画同屏叠加，与系统卷页一致且每笔动画都完整结束。
+            // 快照重建纸面。纸张效果把仍在播放的收尾层转为幽灵堆叠在新纸面上方，
+            // 以与回翻一致的自然速率继续播完——快速连点时新旧翻页动画同屏平滑叠加，
+            // 每笔动画都完整结束。
             if handsOverActiveTransitionOnNewIntent, queuedDiscreteTurns.isEmpty {
                 queuedDiscreteTurns.append(direction)
                 recordAnimationDiagnostic(.queued)
@@ -526,6 +563,12 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             if start.effect == .arch { start.archContactStrength = 0 }
             pending?.cornerDrag = start
             paperView?.update(progress: 0, cornerDrag: start, followsTouch: false)
+            // 点击翻页没有真实手势斜向意图：按宿主强度注入斜向折痕，让收尾中段扫过纸面斜角
+            //（下一页贴近系统卷页的斜向卷曲；上一页为细微斜度）。
+            if start.effect == .curl {
+                let weight = direction == .previous ? previousTurnSlant : nextTurnSlant
+                if weight > 0 { pending?.slantIntent = start.makingTapSlantIntent(weight: weight) }
+            }
             guard isActive, pending?.transition.id == transitionID else { return false }
         }
         settle(completed: true, animated: animated)
@@ -877,8 +920,22 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let local = CGPoint(x: point.x - view.bounds.minX, y: point.y - view.bounds.minY)
         if tracksPanAngle { drag.trackPanAngle(to: local) }
         guard let moved = drag.moved(to: local, direction: direction) else { return }
-        pending?.cornerDrag = moved
-        pending?.progress = moved.gestureProgress
+        // 回翻斜向折痕（宿主可调 previousTurnSlant）：逻辑横跨方向叠加正弦包络偏向。
+        // 默认 0 保持既有贴手契约；平翻（prefersFlatTurn）保持整页平翻；正翻与拱页不受影响。
+        var biased = moved
+        if previousTurnSlant > 0, direction == .previous, moved.effect == .curl, !moved.prefersFlatTurn {
+            let crossExtent: CGFloat = moved.axis == .horizontal ? moved.canvasSize.height : moved.canvasSize.width
+            let sign: CGFloat = moved.axis == .horizontal
+                ? (moved.corner.y == moved.page.maxY ? -1 : 1)
+                : (moved.corner.x == moved.page.maxX ? -1 : 1)
+            let envelope = sin(.pi * min(1, max(0, moved.progress)))
+            let bias = previousTurnSlant * crossExtent * envelope * sign
+            biased.translation = moved.axis == .horizontal
+                ? CGPoint(x: moved.translation.x, y: moved.translation.y + bias)
+                : CGPoint(x: moved.translation.x + bias, y: moved.translation.y)
+        }
+        pending?.cornerDrag = biased
+        pending?.progress = biased.gestureProgress
         recordAnimationDiagnostic(.frame)
         layoutPages()
     }
@@ -931,7 +988,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     /// - Parameter direction: 新一笔方向；与收尾方向相反时不堆叠，避免同一张纸出现两份姿态。
     /// - Returns: 已转为幽灵层为 true；不满足条件时保持原样为 false。
     private func ghostActivePaperRelease(for direction: PageTurnDirection) -> Bool {
-        guard handsOverActiveTransitionOnNewIntent, let release = paperRelease,
+        guard handsOverActiveTransitionOnNewIntent,
+              let release = paperRelease,
               let view = paperView, view.isCornerDriven,
               pending?.transition.id == release.transitionID,
               pending?.transition.direction == direction else { return false }
@@ -991,6 +1049,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     /// 终止 renderer；动画完成闭包与后续操作不能再次提交。调用方切换模式或退出时调用。
     public func invalidate() {
         paperSnapshotCache = nil
+        neighborPrefetches.removeAll(keepingCapacity: false)
+        neighborPrefetchScheduled = false
         guard isActive else { return }
         isActive = false
         automaticIntent = .stopped
@@ -1187,7 +1247,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             let duration = baseDuration * (cornerStart == nil || pending?.isDiscreteTurn == true ? 1 : 1.2) * transitionDurationScale
                 * (paperEffect?.releaseDurationScale ?? 1)
             let waitsForGPU = cornerStart != nil && usesNativeRelease
-            let cornerIntent = usesNativeRelease && completed ? pending?.cornerDrag : nil
+            let cornerIntent = usesNativeRelease && completed
+                ? (pending?.slantIntent ?? pending?.cornerDrag) : nil
             let frameGate = PaperReleaseFrameGate(waitsForGPU: waitsForGPU,
                 submittedFrameCount: paperView?.nativeCornerSubmittedFrameCount ?? 0)
             paperRelease = PaperRelease(transitionID: transition.id, start: progress, target: target,
@@ -1248,6 +1309,7 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             publishAutomaticProgress()
             scheduleCurrentPageReplacement()
             drainDiscreteTurns()
+            scheduleNeighborPrefetch()
         }
         automaticElapsed = 0
         automaticWaitingBoundary = nil
@@ -1436,8 +1498,15 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             currentView.layoutIfNeeded()
             guard canAttach(transitionID: transition.id) else { return false }
         }
-        incomingView.setNeedsLayout()
-        incomingView.layoutIfNeeded()
+        // 目标页命中空闲预取时跳过强制布局与重复捕获，直接复用位图与纹理。
+        // （外观与缩放在预取时已按阅读器特征统一，无需再比对 traits。）
+        let prefetched = neighborPrefetches.first { $0.identity == target.identity && $0.size == size
+            && $0.pixels == configuration.paper.maximumSnapshotPixels }
+        if let prefetched { neighborPrefetches.removeAll { $0.identity == prefetched.identity } }
+        if prefetched == nil {
+            incomingView.setNeedsLayout()
+            incomingView.layoutIfNeeded()
+        }
         guard canAttach(transitionID: transition.id) else { return false }
         let overlay = try PaperTransitionView(currentView: currentView, targetView: incomingView,
                                               effect: effect, direction: transition.direction,
@@ -1445,10 +1514,12 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                                               axis: axis, readingOrder: configuration.readingOrder,
                                               cornerDriven: pending?.cornerDrag != nil,
                                               cachedCurrent: reused?.image, cachedCurrentTexture: reused?.texture,
+                                              cachedTarget: prefetched?.image,
+                                              cachedTargetTexture: prefetched?.texture,
                                               effectOrigin: pending?.effectOrigin)
         guard canAttach(transitionID: transition.id) else { overlay.invalidateResources(); return false }
         guard view.bounds.size == size else { overlay.invalidateResources(); throw PageTurnError.snapshotUnavailable }
-        paperSnapshotCaptureCount += overlay.didReuseCurrentSnapshot ? 1 : 2
+        paperSnapshotCaptureCount += (overlay.didReuseCurrentSnapshot ? 0 : 1) + (overlay.didReuseTargetSnapshot ? 0 : 1)
         lastPaperSnapshotReused = overlay.didReuseCurrentSnapshot
         paperTextureUploadCount += overlay.textureUploadCount
         paperSnapshotCache = overlay.targetSnapshot.map {
@@ -1537,10 +1608,73 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         paperView = nil
     }
 
+    /// 落定后安排一次空闲邻页预取：空闲点直接执行；仍有动画在播时延迟到下一主队列轮。
+    private func scheduleNeighborPrefetch() {
+        guard prefetchNeighborSnapshots, isActive, paperEffect != nil, view.window != nil,
+              !neighborPrefetchScheduled else { return }
+        if isTransitioning || isSettling {
+            neighborPrefetchScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.neighborPrefetchScheduled = false
+                self.performNeighborPrefetch()
+            }
+            return
+        }
+        performNeighborPrefetch()
+    }
+
+    /// 无参数；空闲时离屏捕获当前页与两方向邻页快照并预上传纹理，供点击翻页直接复用。无返回值。
+    private func performNeighborPrefetch() {
+        guard prefetchNeighborSnapshots, isActive, !isTransitioning, suspensionReasons.isEmpty,
+              scrollInteractionIDs.isEmpty, !deliveringEvents, !requestingPage, !mountingPage,
+              !replacingPage, !deliveringReplacementOutcome, queuedReplacement == nil,
+              view.window != nil, !isSettling else { return }
+        let size = view.bounds.size
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
+        let pixels = configuration.paper.maximumSnapshotPixels
+        // 离屏视图没有窗口特征：统一借用阅读器的特征与缩放，保证预取结果可被命中复用。
+        let traits = view.traitCollection
+        let displayScale = Double(max(1, traits.displayScale))
+        // 当前页快照缺失（首屏、尺寸变化或替换后）：先补当前页。
+        if paperSnapshotCache?.identity != currentPage.identity,
+           let currentView = currentPage.controller.viewIfLoaded,
+           let plan = PaperTurnGeometry.snapshotPlan(width: Double(size.width), height: Double(size.height),
+               displayScale: displayScale, maximumSnapshotPixels: pixels),
+           let image = try? PaperTransitionView.capture(currentView, plan: plan) {
+            paperSnapshotCache = (currentPage.identity, presentationID, size, pixels, image,
+                PaperCornerMetalRenderer.prefetchTexture(image), traits)
+        }
+        // 两方向邻页：离屏挂载、布局、捕获并预上传纹理。
+        for direction in [PageTurnDirection.next, .previous] {
+            guard isActive, !isTransitioning, neighborPrefetches.count < 2 else { return }
+            requestingPage = true
+            let availability = pageProvider?(currentPage.identity, direction) ?? .waiting
+            requestingPage = false
+            guard isActive, suspensionReasons.isEmpty, case .page(let neighbor) = availability else { continue }
+            let controller = neighbor.controller
+            guard controller.parent == nil else { continue }
+            controller.loadViewIfNeeded()
+            guard let neighborView = controller.viewIfLoaded else { continue }
+            neighborView.overrideUserInterfaceStyle = traits.userInterfaceStyle
+            neighborView.frame = CGRect(origin: .zero, size: size)
+            neighborView.setNeedsLayout()
+            neighborView.layoutIfNeeded()
+            guard let plan = PaperTurnGeometry.snapshotPlan(width: Double(size.width), height: Double(size.height),
+                displayScale: displayScale, maximumSnapshotPixels: pixels),
+                let image = try? PaperTransitionView.capture(neighborView, plan: plan) else { continue }
+            neighborPrefetches.removeAll { $0.identity == neighbor.identity }
+            neighborPrefetches.append(NeighborPrefetch(identity: neighbor.identity, image: image,
+                texture: PaperCornerMetalRenderer.prefetchTexture(image), size: size, pixels: pixels,
+                traits: traits))
+        }
+    }
+
     /// 内存告警取消纸张事务并暂停自动驱动，防止立即再次申请快照。
     public override func didReceiveMemoryWarning() {
         super.didReceiveMemoryWarning()
         paperSnapshotCache = nil
+        neighborPrefetches.removeAll(keepingCapacity: false)
         guard paperEffect != nil else { return }
         pauseAutomaticReading()
         cancelTransition(reason: .memoryWarning)

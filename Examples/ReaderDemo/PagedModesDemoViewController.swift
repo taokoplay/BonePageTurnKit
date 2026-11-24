@@ -243,6 +243,12 @@ final class PagedModesDemoViewController: UIViewController {
         paged.tapConfiguration = taps
         // 与全屏示例一致：快速连点时上一笔收尾立即落定、新一笔同步起播，连翻节奏贴近系统卷页。
         paged.handsOverActiveTransitionOnNewIntent = true
+        // 左滑（上一页）带细微斜向折痕（参考主流阅读 App 的轻微弧度），折叠仍自由跟手；
+        // 右滑（下一页）点击带系统卷页式的斜向卷曲，拖动仍自由跟手不斜。
+        paged.previousTurnSlant = 0.05
+        paged.nextTurnSlant = 0.05
+        // 空闲预取邻页快照：点击翻页几乎零准备延迟。
+        paged.prefetchNeighborSnapshots = true
         paged.pageProvider = { [weak self] identity, direction in
             self?.availability(from: identity, direction: direction) ?? .failed
         }

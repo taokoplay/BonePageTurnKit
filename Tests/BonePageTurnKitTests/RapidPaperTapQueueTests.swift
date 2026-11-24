@@ -112,24 +112,24 @@ final class RapidPaperTapQueueTests: XCTestCase {
 
     /// 无参数；开启接管后快速连点立即衔接：上一笔推到终点落定，新一笔即刻起播。无返回值。
     func testHandoverStacksRapidPaperTapsLikeSystemCurl() throws {
-        let reader = try reader(effect: .curl)
+        let reader = try reader(effect: .curl, initial: 4)
         defer { reader.invalidate() }
         reader.handsOverActiveTransitionOnNewIntent = true
         var committed: [Int] = []
         reader.onTransition = { event in
             if case .didCommit(let transition) = event, let to = Int(transition.to.unitID) { committed.append(to) }
         }
-        XCTAssertTrue(try reader.turn(.next))
-        XCTAssertTrue(try reader.turn(.next))
+        XCTAssertTrue(try reader.turn(.previous))
+        XCTAssertTrue(try reader.turn(.previous))
         XCTAssertEqual(committed, [3], "第二笔接管时第一笔立即落定")
         XCTAssertEqual(reader.currentPage.identity.unitID, "3")
         XCTAssertTrue(reader.isTransitioning)
-        XCTAssertTrue(try reader.turn(.next))
-        XCTAssertEqual(committed, [3, 4])
-        XCTAssertEqual(reader.currentPage.identity.unitID, "4")
+        XCTAssertTrue(try reader.turn(.previous))
+        XCTAssertEqual(committed, [3, 2])
+        XCTAssertEqual(reader.currentPage.identity.unitID, "2")
         finish(reader)
-        XCTAssertEqual(reader.currentPage.identity.unitID, "5")
-        XCTAssertEqual(committed, [3, 4, 5])
+        XCTAssertEqual(reader.currentPage.identity.unitID, "1")
+        XCTAssertEqual(committed, [3, 2, 1])
         XCTAssertFalse(reader.isTransitioning)
         XCTAssertNil(reader.activePaperView)
     }
@@ -139,9 +139,9 @@ final class RapidPaperTapQueueTests: XCTestCase {
         let reader = try reader(effect: .curl)
         defer { reader.invalidate() }
         reader.handsOverActiveTransitionOnNewIntent = true
-        XCTAssertTrue(try reader.turn(.next))
+        XCTAssertTrue(try reader.turn(.previous))
         let firstPaper = try XCTUnwrap(reader.activePaperView)
-        XCTAssertTrue(try reader.turn(.next))
+        XCTAssertTrue(try reader.turn(.previous))
         XCTAssertEqual(reader.ghostReleaseCount, 1, "接管时应保留旧收尾层为幽灵")
         XCTAssertTrue(reader.activePaperView !== firstPaper)
         XCTAssertTrue(firstPaper.hasResources, "幽灵层必须继续持有资源播放")
@@ -157,7 +157,7 @@ final class RapidPaperTapQueueTests: XCTestCase {
         XCTAssertNil(firstPaper.superview)
         XCTAssertFalse(firstPaper.hasResources)
         for _ in 0..<400 { reader.advancePaperAnimation(elapsed: 1.0 / 60.0) }
-        XCTAssertEqual(reader.currentPage.identity.unitID, "4")
+        XCTAssertEqual(reader.currentPage.identity.unitID, "0")
         XCTAssertNil(reader.activePaperView)
     }
 
@@ -166,13 +166,41 @@ final class RapidPaperTapQueueTests: XCTestCase {
         let reader = try reader(effect: .curl)
         defer { reader.invalidate() }
         reader.handsOverActiveTransitionOnNewIntent = true
-        XCTAssertTrue(try reader.turn(.next))
-        XCTAssertTrue(try reader.turn(.next))
+        XCTAssertTrue(try reader.turn(.previous))
+        XCTAssertTrue(try reader.turn(.previous))
         XCTAssertEqual(reader.ghostReleaseCount, 1)
         reader.cancelTransition()
         XCTAssertEqual(reader.ghostReleaseCount, 0)
         XCTAssertNil(reader.activePaperView)
         XCTAssertFalse(reader.isTransitioning)
+    }
+
+    /// 无参数；下一页连点同样叠加幽灵，残尾以与回翻一致的自然速率播完。无返回值。
+    func testNextHandoverStacksGhostWithNaturalSweep() throws {
+        let reader = try reader(effect: .curl)
+        defer { reader.invalidate() }
+        reader.handsOverActiveTransitionOnNewIntent = true
+        var committed: [Int] = []
+        reader.onTransition = { event in
+            if case .didCommit(let transition) = event, let to = Int(transition.to.unitID) { committed.append(to) }
+        }
+        XCTAssertTrue(try reader.turn(.next))
+        XCTAssertTrue(try reader.turn(.next))
+        XCTAssertEqual(committed, [3], "第二笔接管时第一笔立即落定")
+        XCTAssertEqual(reader.ghostReleaseCount, 1, "下一页连点同样保留幽灵残尾叠加")
+        XCTAssertEqual(reader.currentPage.identity.unitID, "3")
+        var ticks = 0
+        while reader.ghostReleaseCount > 0, ticks < 60 {
+            reader.advanceGhostReleases(elapsed: 1.0 / 60.0)
+            ticks += 1
+        }
+        XCTAssertLessThanOrEqual(ticks, 40, "幽灵残尾以自然速率播完")
+        XCTAssertEqual(reader.ghostReleaseCount, 0)
+        XCTAssertTrue(reader.isTransitioning, "新一笔继续完整播放")
+        for _ in 0..<400 { reader.advancePaperAnimation(elapsed: 1.0 / 60.0) }
+        XCTAssertEqual(reader.currentPage.identity.unitID, "4")
+        XCTAssertEqual(committed, [3, 4])
+        XCTAssertNil(reader.activePaperView)
     }
 }
 #endif

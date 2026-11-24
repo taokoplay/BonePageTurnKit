@@ -121,12 +121,21 @@ final class PaperCornerMetalRenderer {
     static func prewarm() { _ = PaperCornerMetalContext.shared }
     static var isSupported: Bool { MTLCreateSystemDefaultDevice() != nil }
 
+    /// 空闲预取路径专用：按正式捕获的同款选项上传纹理；设备不可用返回 nil。
+    static func prefetchTexture(_ image: CGImage) -> TextureSnapshot? {
+        guard case .success(let context) = PaperCornerMetalContext.shared else { return nil }
+        let options: [MTKTextureLoader.Option: Any] = [.SRGB: false, .origin: MTKTextureLoader.Origin.topLeft,
+            .textureUsage: MTLTextureUsage.shaderRead.rawValue, .textureStorageMode: MTLStorageMode.private.rawValue]
+        do { return TextureSnapshot(image: image, texture: try context.loader.newTexture(cgImage: image, options: options)) }
+        catch { return nil }
+    }
+
     /// - Parameters: current: 当前页快照；target: 目标页快照；size: 点坐标视口；axis: 翻页轴；spread: 是否双页；strips: 曲面精度；paperColor: 单页纸背底色。
     /// - Throws: 本机 Metal 资源创建失败；不创建另一种翻页效果。
     init(current: CGImage, target: CGImage, size: CGSize, axis: PageTurnAxis,
          spread: Bool, strips: Int, paperColor: UIColor, direction: PageTurnDirection = .next,
-         cachedCurrentTexture: TextureSnapshot? = nil, readingOrder: ReaderReadingOrder = .leftToRight,
-         effect: PageTurnEffect = .curl) throws {
+         cachedCurrentTexture: TextureSnapshot? = nil, cachedTargetTexture: TextureSnapshot? = nil,
+         readingOrder: ReaderReadingOrder = .leftToRight, effect: PageTurnEffect = .curl) throws {
         context = try PaperCornerMetalContext.shared.get()
         self.size = size; self.axis = axis; self.direction = direction; self.spread = spread; self.strips = strips
         self.readingOrder = readingOrder
@@ -146,8 +155,15 @@ final class PaperCornerMetalRenderer {
             currentPage = TextureSnapshot(image: current, texture: try context.loader.newTexture(cgImage: current, options: options))
             textureUploadCount += 1
         }
-        let targetPage = TextureSnapshot(image: target, texture: try context.loader.newTexture(cgImage: target, options: options))
-        textureUploadCount += 1
+        let targetPage: TextureSnapshot
+        if let cached = cachedTargetTexture, cached.image === target,
+           cached.texture.device.registryID == context.device.registryID,
+           cached.texture.width == target.width, cached.texture.height == target.height {
+            targetPage = cached
+        } else {
+            targetPage = TextureSnapshot(image: target, texture: try context.loader.newTexture(cgImage: target, options: options))
+            textureUploadCount += 1
+        }
         targetPageSnapshot = targetPage
         // 回翻的运动纸张统一取上一页，底页仍为当前页；正翻角色不变。
         let swapsPages = direction == .previous

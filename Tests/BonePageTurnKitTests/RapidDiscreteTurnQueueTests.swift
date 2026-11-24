@@ -157,12 +157,12 @@ final class RapidDiscreteTurnQueueTests: XCTestCase {
                 reader.handsOverActiveTransitionOnNewIntent = handsOver
                 var commits = 0
                 reader.onTransition = { if case .didCommit = $0 { commits += 1 } }
-                XCTAssertTrue(try reader.turn(.next))
-                XCTAssertTrue(try reader.turn(.next))
+                XCTAssertTrue(try reader.turn(.previous))
+                XCTAssertTrue(try reader.turn(.previous))
                 XCTAssertTrue(reader.isTransitioning)
                 if handsOver {
                     // 接管：第一笔推到终点落定，第二笔立即起播。
-                    XCTAssertEqual(reader.currentPage.identity.unitID, "3")
+                    XCTAssertEqual(reader.currentPage.identity.unitID, "1")
                     XCTAssertEqual(commits, 1)
                 } else {
                     // 队列：上一笔完整播放，页未提交，意图按序等待。

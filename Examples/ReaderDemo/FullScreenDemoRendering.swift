@@ -192,6 +192,12 @@ extension FullScreenReaderDemoViewController {
                                                              nextStart: scene.settings.tapTurns ? scene.settings.nextStart : 1)
         // 连点时新一笔立刻起播（平移／覆盖）；仿真与拱页仍需重建纸面快照，改为排队＋加速。
         paged.handsOverActiveTransitionOnNewIntent = true
+        // 左滑（上一页）带细微斜向折痕（参考主流阅读 App 的轻微弧度），折叠仍自由跟手；
+        // 右滑（下一页）点击带系统卷页式的斜向卷曲，拖动仍自由跟手不斜。
+        paged.previousTurnSlant = 0.05
+        paged.nextTurnSlant = 0.05
+        // 空闲预取邻页快照：点击翻页几乎零准备延迟。
+        paged.prefetchNeighborSnapshots = true
         paged.shouldHandleTap = { [weak self, weak scene, weak paged] point in
             guard let self, let scene, let paged, self.scene === scene, scene.settings.tapsEnabled else { return false }
             // 处理方在触点开始时固定；宿主先开始翻页后，快照覆盖层会改变当前命中树。

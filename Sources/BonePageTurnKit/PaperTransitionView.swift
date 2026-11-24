@@ -65,6 +65,8 @@ final class PaperTransitionView: UIView {
     private(set) var softwareCornerDrawCount = 0
     /// 本次是否复用了传入的当前页位图（未重新抓取）。
     private(set) var didReuseCurrentSnapshot = false
+    /// 本次是否复用了传入的目标页位图（邻页空闲预取）。
+    private(set) var didReuseTargetSnapshot = false
     /// 本次抓取的目标页位图；下一笔翻页可用作当前页缓存。
     var targetSnapshot: CGImage? { targetImage }
     var targetTextureSnapshot: PaperCornerMetalRenderer.TextureSnapshot? { metalRenderer?.targetPageSnapshot }
@@ -132,6 +134,8 @@ final class PaperTransitionView: UIView {
          readingOrder: ReaderReadingOrder = .leftToRight, cornerDriven: Bool = false,
          cachedCurrent: CGImage? = nil,
          cachedCurrentTexture: PaperCornerMetalRenderer.TextureSnapshot? = nil,
+         cachedTarget: CGImage? = nil,
+         cachedTargetTexture: PaperCornerMetalRenderer.TextureSnapshot? = nil,
          effectOrigin: CGPoint? = nil) throws {
         try options.validate()
         guard effect == .curl || effect == .arch || effect.isWholePageMetalEffect else { throw PageTurnError.unsupportedPresentation }
@@ -162,8 +166,9 @@ final class PaperTransitionView: UIView {
             return abs(cachedAspect - planAspect) < 0.01 ? image : nil
         }
         didReuseCurrentSnapshot = reused != nil
+        didReuseTargetSnapshot = cachedTarget != nil
         let current = try reused ?? Self.capture(currentView, plan: plan)
-        let target = try Self.capture(targetView, plan: plan)
+        let target = try cachedTarget ?? Self.capture(targetView, plan: plan)
         let moving = direction == .next ? current : target
         let landing = direction == .next ? target : current
         let prepared: [PreparedStrip]
@@ -218,6 +223,7 @@ final class PaperTransitionView: UIView {
             metalRenderer = try PaperCornerMetalRenderer(current: current, target: target, size: size,
                 axis: axis, spread: spine == .center, strips: options.stripCount, paperColor: cornerPaperColor,
                 direction: direction, cachedCurrentTexture: reused == nil ? nil : cachedCurrentTexture,
+                cachedTargetTexture: didReuseTargetSnapshot ? cachedTargetTexture : nil,
                 readingOrder: readingOrder, effect: effect)
         }
     }
@@ -564,7 +570,7 @@ private extension PaperTransitionView {
     /// - Parameters: view: 已布局的页面；plan: 预先校验的两图像素计划。
     /// - Returns: 不含 UIImage 包装的零原点位图。
     /// - Throws: 无法生成与预算计划一致的位图时抛出 snapshotUnavailable。
-    static func capture(_ view: UIView, plan: PaperSnapshotPlan) throws -> CGImage {
+    internal static func capture(_ view: UIView, plan: PaperSnapshotPlan) throws -> CGImage {
         let pixelSize = CGSize(width: plan.pixelWidth, height: plan.pixelHeight)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
