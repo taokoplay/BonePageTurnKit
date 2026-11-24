@@ -207,8 +207,8 @@ enum PaperArchGeometry {
         let startCross = (horizontal ? input.y : input.x) * engagement
         let fraction = drag.archRelease?.fraction ?? 0
         let completed = drag.archRelease?.completed ?? false
-        let unload = drag.archRelease == nil ? 0 : smooth(unfolding ? fraction : (completed ? min(1, 2 * fraction) : fraction))
-        let landing = unfolding && !completed ? -contact : contact
+        let unload = drag.archRelease == nil ? 0 : smooth(completed ? min(1, 2 * fraction) : fraction)
+        let landing = unfolding ? -contact : contact
         let endX = min(contact, max(-contact, startX + (landing - startX) * unload))
         var endCross = startCross * (1 - unload)
         let capacity = max(0, (contact - endX) * (contact + endX))
@@ -224,12 +224,19 @@ enum PaperArchGeometry {
         let materialSpan = radius.map { $0 * atan2(contact, radialCross) } ?? contact
         let projectedEnd = radius.map { $0 * atan2(endX, crossSign * (originCross + endCross - apex)) } ?? endX
         let pad = min(12, max(0, (materialSpan - abs(projectedEnd)) / 4))
+        // 材质剖面 96 个结点已超过视觉可分辨密度；每帧网格重建成本随结点数线性增长，
+        // 是拱页逐帧 CPU 预算的最大单项，避免高刷设备上掉到半帧率。
         let profile = Profile(span: max(0, materialSpan - pad), end: projectedEnd - pad,
-            radius: radius, count: min(128, max(64, stripCount)), unfolding: unfolding)
+            radius: radius, count: min(96, max(64, stripCount)), unfolding: unfolding)
         // 先展开受压弧，再绕同一装订边转动；每一步仍为可展映射或刚体转动。
         let ratio = profile.span > 1e-10 ? profile.end / profile.span : 1
-        let rotationGate = smooth((ratio - 0.2) / 0.2)
-        let rotation = completed && !unfolding ? .pi * smooth(fraction) * rotationGate : 0
+        // 回翻收尾分两段：前半段沿书脊卸载受压弧并越过书脊收平（纸面始终在底页上方），
+        // 后半段把已展平的纸绕原装订线翻转、立起并平铺到本页，与正翻的转出互为镜像；
+        // 取消只沿书脊收回，不翻转。
+        let rotation: CGFloat
+        if !completed { rotation = 0 }
+        else if unfolding { rotation = -.pi * smooth(max(0, min(1, (fraction - 0.5) / 0.5))) }
+        else { rotation = .pi * smooth(fraction) * smooth((ratio - 0.2) / 0.2) }
         let cosine = cos(rotation), sine = sin(rotation)
         let contactPad = min(12, pad / 3)
         let spread = min(breadth, max(48, breadth * 0.45))

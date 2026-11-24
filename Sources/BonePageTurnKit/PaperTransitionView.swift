@@ -429,7 +429,10 @@ private extension PaperTransitionView {
             return
         }
         let crossOffset = axis == .horizontal ? drag.translation.y : drag.translation.x
-        if drag.progress == 1, crossOffset == 0 { return }
+        if drag.progress == 1, crossOffset == 0 {
+            if !ghost { Self.drawImage(under, in: page, context: context) }
+            return
+        }
         let patches = PaperCornerCurlGeometry.patches(for: drag, stripCount: requestedStripCount)
         if ghost { /* 幽灵层不画底页，只画翻动纸面 */ }
         else if spine == .center {

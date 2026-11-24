@@ -1493,13 +1493,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         release.elapsed = min(release.duration, release.elapsed + step)
         paperRelease = release
         let t = CGFloat(release.elapsed / release.duration)
-        let blend: CGFloat
-        if pending?.isDiscreteTurn == true {
-            blend = Self.fullPagePaperBlend(at: t)
-        } else {
-            let remainder = 1 - t
-            blend = 1 - remainder * remainder * remainder
-        }
+        // 松手收尾与整页点击统一使用系统缓入缓出：动作铺满整个时长，
+        // 不在前几帧把姿态冲过终点后留下无动画的空尾。
+        let blend = Self.fullPagePaperBlend(at: t)
         pending?.progress = release.start + (release.target - release.start) * blend
         if let drag = release.cornerStart, let direction = pending?.transition.direction {
             pending?.cornerDrag = drag.released(completed: release.completed, fraction: blend, direction: direction,
