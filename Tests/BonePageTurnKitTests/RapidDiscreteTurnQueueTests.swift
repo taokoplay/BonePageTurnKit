@@ -148,23 +148,30 @@ final class RapidDiscreteTurnQueueTests: XCTestCase {
         XCTAssertEqual(reader.transitionDurationScale, 1, accuracy: 0.001)
     }
 
-    /// 无参数；纸张效果（仿真／拱页）不接管，避免重建快照造成跳变。无返回值。
-    func testPaperEffectsQueueInsteadOfHandingOver() throws {
+    /// 无参数；关闭接管时纸张按队列完整播放；开启后仿真／拱页与轻量效果一样立即衔接。无返回值。
+    func testPaperEffectHandOverFollowsHostSwitch() throws {
         for effect in [PageTurnEffect.curl, .arch] {
-            let reader = try reader(effect: effect)
-            defer { reader.invalidate() }
-            reader.handsOverActiveTransitionOnNewIntent = true
-            var commits = 0
-            reader.onTransition = { if case .didCommit = $0 { commits += 1 } }
-            XCTAssertTrue(try reader.turn(.next))
-            XCTAssertTrue(try reader.turn(.next))
-            // 不接管：上一笔仍在播放，页未提交，意图进了队列。
-            XCTAssertEqual(reader.currentPage.identity.unitID, "2")
-            XCTAssertEqual(commits, 0)
-            XCTAssertTrue(reader.isTransitioning)
-            reader.cancelTransition()
-            XCTAssertFalse(reader.isTransitioning)
-            XCTAssertEqual(reader.currentPage.identity.unitID, "2")
+            for handsOver in [false, true] {
+                let reader = try reader(effect: effect)
+                defer { reader.invalidate() }
+                reader.handsOverActiveTransitionOnNewIntent = handsOver
+                var commits = 0
+                reader.onTransition = { if case .didCommit = $0 { commits += 1 } }
+                XCTAssertTrue(try reader.turn(.next))
+                XCTAssertTrue(try reader.turn(.next))
+                XCTAssertTrue(reader.isTransitioning)
+                if handsOver {
+                    // 接管：第一笔推到终点落定，第二笔立即起播。
+                    XCTAssertEqual(reader.currentPage.identity.unitID, "3")
+                    XCTAssertEqual(commits, 1)
+                } else {
+                    // 队列：上一笔完整播放，页未提交，意图按序等待。
+                    XCTAssertEqual(reader.currentPage.identity.unitID, "2")
+                    XCTAssertEqual(commits, 0)
+                }
+                reader.cancelTransition()
+                XCTAssertFalse(reader.isTransitioning)
+            }
         }
     }
 

@@ -241,6 +241,8 @@ final class PagedModesDemoViewController: UIViewController {
     /// - Parameters: paged: 尚在安装中的新容器；taps: 沿配置主轴解释的点击分区。
     private func prepare(_ paged: PagedReaderViewController, taps: ReaderTapConfiguration) {
         paged.tapConfiguration = taps
+        // 与全屏示例一致：快速连点时上一笔收尾立即落定、新一笔同步起播，连翻节奏贴近系统卷页。
+        paged.handsOverActiveTransitionOnNewIntent = true
         paged.pageProvider = { [weak self] identity, direction in
             self?.availability(from: identity, direction: direction) ?? .failed
         }

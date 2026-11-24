@@ -75,8 +75,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
     /// 仅通知中心点击位置，不承担菜单等业务。
     public var onCenterTap: ((CGPoint) -> Void)?
     /// 过渡中收到新意图时，是否立即把当前收尾推到终点并开始新一笔（“最新一笔优先”）。
-    /// 只对平移、覆盖和无动画生效；仿真／拱页仍需重建纸面快照，接管会看到跳变，因此继续排队。
-    /// 关闭时所有效果都按队列等待上一笔播完。
+    /// 开启后所有效果立即衔接，且纸张效果（仿真／拱页）把旧收尾层转为幽灵堆叠在上方继续播完：
+    /// 快速连点时多个翻页动画同屏叠加，旧动画完整结束、新动画即刻起播；关闭时按队列逐笔完整播放。
     public var handsOverActiveTransitionOnNewIntent = false
     public var onReadingStatus: ((ReaderStatus) -> Void)?
     public var onViewportSizeChange: ((CGSize) -> Void)?
@@ -136,12 +136,74 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         let completed: Bool
         let cornerStart: PaperCornerDrag?
         let cornerIntent: PaperCornerDrag?
+        let isDiscreteTurn: Bool
         var frameGate: PaperReleaseFrameGate
         var awaitingFinalFrame = false
         var elapsed: TimeInterval = 0
     }
     private var paperView: PaperTransitionView?
     private var paperRelease: PaperRelease?
+    /// 快速翻页堆叠：被新一笔接管的上一笔收尾层，在新一笔纸面上方继续自然播完再移除。
+    @MainActor
+    private final class GhostReleaseDriver {
+        private let paperView: PaperTransitionView
+        private let direction: PageTurnDirection
+        private var release: PaperRelease
+        private let clock = ReaderDisplayLink()
+        private let onFinished: (GhostReleaseDriver) -> Void
+        /// 幽灵层宿主视图；供新纸面插入到全部幽灵之下时读取。
+        var viewForZOrder: PaperTransitionView { paperView }
+
+        /// - Parameters: view: 已转为幽灵层的纸面；release: 接管时的收尾状态；direction: 收尾翻页方向；onFinished: 播完或中断回调。
+        init(view: PaperTransitionView, release: PaperRelease, direction: PageTurnDirection,
+             onFinished: @escaping (GhostReleaseDriver) -> Void) {
+            self.paperView = view
+            self.release = release
+            self.direction = direction
+            self.onFinished = onFinished
+            clock.onTick = { [weak self] elapsed in self?.tick(elapsed) }
+        }
+
+        /// 标量驱动时启动幽灵独立时钟；原生驱动可用时由 Metal 视图时钟接管。无返回值。
+        func startScalarClock(maximumFramesPerSecond: Int?) {
+            clock.start(maximumFramesPerSecond: maximumFramesPerSecond)
+        }
+
+        /// - Parameter elapsed: 帧间秒数；与主收尾共用同一门禁与曲线，播完自动移除。无返回值。
+        func tick(_ elapsed: TimeInterval) {
+            guard let step = release.frameGate.step(elapsed: elapsed,
+                submittedFrameCount: paperView.nativeCornerSubmittedFrameCount,
+                framesExhausted: paperView.nativeFramesExhausted) else { return }
+            if release.awaitingFinalFrame { finish(); return }
+            release.elapsed = min(release.duration, release.elapsed + step)
+            let t = CGFloat(release.elapsed / release.duration)
+            let blend: CGFloat
+            if release.isDiscreteTurn {
+                blend = PagedReaderViewController.fullPagePaperBlend(at: t)
+            } else {
+                let remainder = 1 - t
+                blend = 1 - remainder * remainder * remainder
+            }
+            let progress = release.start + (release.target - release.start) * blend
+            let drag = release.cornerStart?.released(completed: release.completed, fraction: blend,
+                direction: direction, angleIntent: release.cornerIntent)
+            paperView.update(progress: progress, cornerDrag: drag, followsTouch: false)
+            if release.elapsed >= release.duration {
+                if release.frameGate.waitsForGPU { release.awaitingFinalFrame = true }
+                else { finish() }
+            }
+        }
+
+        func finish() {
+            clock.stop()
+            onFinished(self)
+        }
+    }
+    private var ghostReleases: [GhostReleaseDriver] = []
+    /// 当前存活的幽灵收尾层数量；测试与堆叠插入使用。
+    internal var ghostReleaseCount: Int { ghostReleases.count }
+    /// 幽灵接管后的一次 finish 保留 paperView 所有权，不销毁视图。
+    private var preserveGhostPaper = false
     private var queuedDiscreteTurns: [PageTurnDirection] = []
     /// 水墨／破冰等触点原点效果在点击／排队翻页时使用的最近触点；被下一笔消费即清空。
     private var pendingTouchOrigin: CGPoint? = nil
@@ -407,10 +469,13 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
             try validateQueuedTurnStart()
             guard queuedDiscreteTurns.count < maximumQueuedDiscreteTurns else { return false }
             recordTurnIntent()
-            // 纸张效果（仿真／拱页）接管要重做快照会看到跳变，因此继续排队；只让轻量效果立即接管。
-            if handsOverActiveTransitionOnNewIntent, queuedDiscreteTurns.isEmpty, paperEffect == nil {
+            // 所有效果都立即衔接：上一笔提交后，下一笔在同一主队列轮内复用缓存的上一笔目标页
+            // 快照重建纸面。纸张效果先把仍在播放的收尾层转为幽灵堆叠在新纸面上方继续播完，
+            // 快速连点时新旧翻页动画同屏叠加，与系统卷页一致且每笔动画都完整结束。
+            if handsOverActiveTransitionOnNewIntent, queuedDiscreteTurns.isEmpty {
                 queuedDiscreteTurns.append(direction)
                 recordAnimationDiagnostic(.queued)
+                _ = ghostActivePaperRelease(for: direction)
                 // 立即接管：当前动画推到本笔终点，落定回调后马上开始这一笔，不等上一段播完。
                 handOverActiveTransition()
                 return true
@@ -479,9 +544,6 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 queuedDiscreteTurns.removeAll(keepingCapacity: false); return
             }
             let direction = queuedDiscreteTurns.removeFirst()
-            // 仿真/拱页快速点击不再排队续翻：收尾只消费一笔，剩余意图直接丢弃，
-            // 结束后重新点击才翻下一页。轻量效果（平移/覆盖）保持原按序排队契约。
-            if paperEffect != nil { queuedDiscreteTurns.removeAll(keepingCapacity: false) }
             do {
                 // 边界只消费这一笔意图，后续相反方向仍可从真实落定页继续。
                 _ = try startDiscreteTurn(direction, animated: true)
@@ -670,7 +732,9 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                            prefersFlatTurn: Bool = false) throws -> Bool {
         try validateTurnStart()
         if let release = interruptibleCurlRelease {
-            // 新输入立即衔接；沿用上一页已决定的完成／取消结果，旧资源和终态只清理一次。
+            // 新输入立即衔接；同向时旧收尾层转为幽灵继续播完，反向不堆叠避免同纸两份姿态。
+            _ = ghostActivePaperRelease(for: direction)
+            // 沿用上一页已决定的完成／取消结果，旧资源和终态只清理一次。
             finish(transitionID: release.transitionID, completed: release.completed, reason: .handoff)
             // 落定回调可暂停、退出、回填或改变视口，不能以回调前的状态继续查询邻页。
             try validateTurnStart()
@@ -854,12 +918,49 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         panQueuedWhileTransitioning = false
         preserveAnimationDiagnosticTiming()
         settlingCompletion = nil
+        endGhostReleases()
         guard let transition = pending?.transition else { return }
         animator?.stopAnimation(true)
         animator = nil
         paperClock.stop()
         paperRelease = nil
         finish(transitionID: transition.id, completed: false, reason: reason)
+    }
+
+    /// 把仍在上播的收尾层转为幽灵：所有权移交驱动，在新一笔纸面上方继续自然播完。
+    /// - Parameter direction: 新一笔方向；与收尾方向相反时不堆叠，避免同一张纸出现两份姿态。
+    /// - Returns: 已转为幽灵层为 true；不满足条件时保持原样为 false。
+    private func ghostActivePaperRelease(for direction: PageTurnDirection) -> Bool {
+        guard handsOverActiveTransitionOnNewIntent, let release = paperRelease,
+              let view = paperView, view.isCornerDriven,
+              pending?.transition.id == release.transitionID,
+              pending?.transition.direction == direction else { return false }
+        let driver = GhostReleaseDriver(view: view, release: release, direction: direction) { [weak self] driver in
+            guard let self else { return }
+            ghostReleases.removeAll { $0 === driver }
+            driver.viewForZOrder.removeFromSuperview()
+            driver.viewForZOrder.invalidateResources()
+        }
+        paperClock.stop()
+        paperView = nil
+        paperRelease = nil
+        ghostReleases.append(driver)
+        preserveGhostPaper = true
+        view.beginGhostRelease()
+        // 原生时钟继续驱动幽灵；不可用时退回幽灵独立时钟。
+        if !usesDisplayLinkForPaperAnimation
+            || view.driveNativeRelease({ [weak driver] elapsed in driver?.tick(elapsed) }) == false {
+            driver.startScalarClock(maximumFramesPerSecond: view.window?.screen.maximumFramesPerSecond)
+        }
+        return true
+    }
+
+    /// 立即结束全部幽灵层；取消、暂停、失效与尺寸变化路径经 cancelTransition 统一调用。无返回值。
+    private func endGhostReleases() {
+        guard !ghostReleases.isEmpty else { return }
+        let drivers = ghostReleases
+        ghostReleases.removeAll(keepingCapacity: false)
+        for driver in drivers { driver.finish() }
     }
 
     /// 把进行中的收尾动画直接推到本笔终点并落定，随后由 `finish` 的收尾流程开始排队的那一笔。
@@ -1091,7 +1192,8 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
                 submittedFrameCount: paperView?.nativeCornerSubmittedFrameCount ?? 0)
             paperRelease = PaperRelease(transitionID: transition.id, start: progress, target: target,
                                         duration: duration, completed: completed, cornerStart: cornerStart,
-                                        cornerIntent: cornerIntent, frameGate: frameGate)
+                                        cornerIntent: cornerIntent, isDiscreteTurn: pending?.isDiscreteTurn == true,
+                                        frameGate: frameGate)
             if let cornerStart {
                 // 从最后已提交的姿态继续；收尾自身已计时，不再叠加跟随缓冲。
                 pending?.progress = progress
@@ -1357,7 +1459,12 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         overlay.setMetalPresentationMetricsEnabled(animationDiagnosticsEnabled)
         overlay.setPagePresentationMetricsEnabled(animationDiagnosticsEnabled)
         overlay.frame = view.bounds
-        view.addSubview(overlay)
+        // 幽灵堆叠：新一笔纸面插到全部幽灵层之下，旧卷曲在上层继续播完。
+        if let lowestGhost = ghostReleases.last?.viewForZOrder, lowestGhost.superview === view {
+            view.insertSubview(overlay, belowSubview: lowestGhost)
+        } else {
+            view.addSubview(overlay)
+        }
         if animationDiagnosticsEnabled {
             let preparation = (animationDiagnosticTrace?.preparation ?? 0) + CACurrentMediaTime() - diagnosticPreparationStart
             animationDiagnosticTrace?.preparation = preparation
@@ -1414,10 +1521,21 @@ public final class PagedReaderViewController: UIViewController, UIGestureRecogni
         }
     }
 
+    /// 测试专用：手动推进全部幽灵层；生产由各幽灵自身时钟或原生视图时钟驱动。无返回值。
+    internal func advanceGhostReleases(elapsed: TimeInterval) {
+        for driver in ghostReleases { driver.tick(elapsed) }
+    }
+
     /// 动画终态或失效时释放局部快照和条带，不进入跨页缓存。
+    /// 幽灵堆叠时所有权已移交幽灵驱动，只解除控制器引用，不销毁视图。
     private func releasePaperResources() {
         paperClock.stop()
         paperRelease = nil
+        if preserveGhostPaper {
+            preserveGhostPaper = false
+            paperView = nil
+            return
+        }
         paperView?.invalidateResources()
         paperView?.removeFromSuperview()
         paperView = nil

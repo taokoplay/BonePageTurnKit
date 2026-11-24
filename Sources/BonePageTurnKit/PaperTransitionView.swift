@@ -27,6 +27,10 @@ final class PaperTransitionView: UIView {
     private(set) var progress: CGFloat = 0
     private(set) var cornerDrag: PaperCornerDrag?
     private let cornerDriven: Bool
+    /// 幽灵收尾层：被新一笔接管的上一笔纸面，在新层上方继续播完；露出的底页区域转透明由下方补齐。
+    private(set) var rendersGhostRelease = false
+    /// 是否由二维触点纸面驱动；决定快速翻页能否堆叠幽灵收尾层。
+    var isCornerDriven: Bool { cornerDriven }
     private var metalRenderer: PaperCornerMetalRenderer?
     private var metalView: PaperCornerMetalView?
     /// 整页 GPU 效果（火焰烧穿／电视故障／折纸／碎片／水墨／破冰／浪潮）共用的渲染器与图层。
@@ -268,6 +272,18 @@ final class PaperTransitionView: UIView {
         setNeedsDisplay()
     }
 
+    /// 转为幽灵收尾层：自身底图与露出的底页区域透明，只保留正在翻动的纸面与阴影。
+    /// - Returns: 无返回值；重复调用无副作用。
+    func beginGhostRelease() {
+        guard !rendersGhostRelease else { return }
+        rendersGhostRelease = true
+        isOpaque = false
+        backgroundColor = nil
+        layer.contents = nil
+        metalView?.setGhostUnderPage(true)
+        setNeedsDisplay()
+    }
+
     /// - Parameter rect: UIKit 请求刷新的区域；始终按完整 bounds 投影，避免局部刷新改变几何。
     /// - Returns: 无返回值。
     override func draw(_ rect: CGRect) {
@@ -283,6 +299,8 @@ final class PaperTransitionView: UIView {
         context.interpolationQuality = .high
         if metalView != nil {
             // Metal 子层负责动态纸面；父层仅保留一次静态底图，避免同时运行 CPU 逐帧绘制。
+            // 幽灵层不画底图：露出的底页由下方新一笔纸面补齐，本层只保留翻动纸面。
+            if rendersGhostRelease { return }
             Self.drawImage(current, in: page, context: context); return
         }
         if effect.isWholePageMetalEffect {
@@ -358,13 +376,19 @@ private extension PaperTransitionView {
     func drawDirectionalArch(_ drag: PaperCornerDrag, current: CGImage, target: CGImage,
                              page: CGRect, context: CGContext) {
         softwareCornerDrawCount += 1
-        if drag.gestureProgress == 0 { Self.drawImage(current, in: page, context: context); return }
-        if drag.gestureProgress == 1, drag.archContactStrength == 0 { Self.drawImage(target, in: page, context: context); return }
+        if rendersGhostRelease {
+            // 幽灵层只画翻动纸面；完全折出／完全落平的终态不留任何内容。
+            if drag.gestureProgress == 0 || (drag.gestureProgress == 1 && drag.archContactStrength == 0) { return }
+        } else {
+            if drag.gestureProgress == 0 { Self.drawImage(current, in: page, context: context); return }
+            if drag.gestureProgress == 1, drag.archContactStrength == 0 { Self.drawImage(target, in: page, context: context); return }
+        }
         // 与 Metal 的线性纹理采样保持一致，避免逐三角形的高阶重采样在字形边缘产生不同晕圈。
         context.interpolationQuality = .low
         let front = direction == .next ? current : target, under = direction == .next ? target : current
         let sourcePage = PaperArchGeometry.materialPage(for: drag, direction: direction)
-        if spine == .center {
+        if rendersGhostRelease { /* 幽灵层不画底页 */ }
+        else if spine == .center {
             Self.drawImage(front, in: page, context: context)
             context.saveGState(); context.clip(to: sourcePage)
             Self.drawImage(under, in: page, context: context); context.restoreGState()
@@ -399,11 +423,16 @@ private extension PaperTransitionView {
         guard let drag = input.foldingPresentation(direction: direction, size: page.size, spread: spine == .center) else { return }
         let front = direction == .next ? current : target
         let under = direction == .next ? target : current
-        if drag.translation == .zero { Self.drawImage(front, in: page, context: context); return }
+        let ghost = rendersGhostRelease
+        if drag.translation == .zero {
+            if !ghost { Self.drawImage(front, in: page, context: context) }
+            return
+        }
         let crossOffset = axis == .horizontal ? drag.translation.y : drag.translation.x
-        if drag.progress == 1, crossOffset == 0 { Self.drawImage(under, in: page, context: context); return }
+        if drag.progress == 1, crossOffset == 0 { return }
         let patches = PaperCornerCurlGeometry.patches(for: drag, stripCount: requestedStripCount)
-        if spine == .center {
+        if ghost { /* 幽灵层不画底页，只画翻动纸面 */ }
+        else if spine == .center {
             Self.drawImage(front, in: page, context: context)
             context.saveGState(); context.clip(to: drag.page)
             Self.drawImage(under, in: page, context: context); context.restoreGState()

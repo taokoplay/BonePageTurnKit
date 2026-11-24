@@ -26,7 +26,7 @@ fragment shader 内计算，每帧只更新 uniform——CPU 无逐像素工作�
   页缘中点。水墨与破冰的原点全程跟随手指（`originFollowsFinger`），分区点击
   与快速连滑排队也从最近触点起墨／起裂；火焰始终从运动侧页缘中点起火。
 - 拖动减速与提交门槛同比缩小（门槛 = 0.17 × 减速系数），保持相同的物理
-  提交距离；快速点击排队语义与火焰烧穿一致（收尾只消费一笔）。
+  提交距离；快速点击默认按序排队不丢弃，宿主开启 `handsOverActiveTransitionOnNewIntent` 后立即衔接（仿真／拱页另有幽灵堆叠：旧收尾层继续播完），翻页节奏与系统卷页一致。
 - 原生收尾：`driveNativeRelease` 由 GPU 图层时钟驱动（与仿真／拱页同一机制）。
 - 设备不支持 Metal 时：`hasResources == false`，翻页自动降级为无动画跳页。
 

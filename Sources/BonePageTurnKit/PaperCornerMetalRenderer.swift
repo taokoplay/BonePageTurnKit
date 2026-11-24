@@ -43,6 +43,8 @@ private final class PaperCornerMetalContext {
     fragment float4 cornerFragment(CornerOutput in [[stage_in]], texture2d<float> current [[texture(0)]],
                                    texture2d<float> target [[texture(1)]], constant float4 &paper [[buffer(0)]]) {
         if (in.material > 2.5) { return float4(0, 0, 0, in.shade); }
+        // 幽灵收尾层：露出的底页区域写透明，由下方新一笔纸面补齐；纸背与阴影保持不透明。
+        if (in.material > 0.5 && in.material < 1.5 && paper.a < 0.5) { return float4(0, 0, 0, 0); }
         constexpr sampler imageSampler(coord::normalized, address::clamp_to_edge, filter::linear);
         // 单页背材保留移动纸页的透印，源坐标随纸面反折；弧面和平面采用相同混合。
         // 0.52 让纸背能读出整行正文（外部参考录屏实测约 +10% 亮度、正文可读），同时仍压住纸色底。
@@ -95,6 +97,8 @@ final class PaperCornerMetalRenderer {
     private let maximumVertices: Int
     private(set) var lastTiming: Timing?
     private(set) var submittedFrameCount = 0
+    /// 幽灵收尾层：底页采样写透明、清屏透明，供新旧纸面同屏堆叠合成。
+    var ghostUnderPage = false
     var collectsPresentationMetrics = false {
         didSet {
             guard oldValue != collectsPresentationMetrics else { return }
@@ -252,11 +256,14 @@ final class PaperCornerMetalRenderer {
         }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture; pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1); pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = ghostUnderPage ? MTLClearColorMake(0, 0, 0, 0) : MTLClearColorMake(0, 0, 0, 1)
+        pass.colorAttachments[0].storeAction = .store
         guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
         encoder.setRenderPipelineState(context.pipeline)
         encoder.setVertexBuffer(slots[slot].buffer, offset: 0, index: 0)
-        var viewport = SIMD2(Float(size.width), Float(size.height)), paper = color
+        var viewport = SIMD2(Float(size.width), Float(size.height))
+        var paper = color
+        if ghostUnderPage { paper.w = 0 }
         encoder.setVertexBytes(&viewport, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
         encoder.setFragmentBytes(&paper, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
         encoder.setFragmentTexture(current, index: 0); encoder.setFragmentTexture(target, index: 1)
@@ -424,6 +431,14 @@ final class PaperCornerMetalView: UIView {
             let size = CGSize(width: max(1, bounds.width * scale), height: max(1, bounds.height * scale))
             if metal.drawableSize != size { metal.drawableSize = size }
         }
+    }
+
+    /// 幽灵收尾层外观：宿主视图与 Metal 图层转透明，底页区域由着色器写透明。无返回值。
+    func setGhostUnderPage(_ on: Bool) {
+        renderer.ghostUnderPage = on
+        isOpaque = !on
+        backgroundColor = on ? .clear : nil
+        if let metal = layer as? CAMetalLayer { metal.isOpaque = !on }
     }
 
     /// 清理时钟和纹理；无参数及返回值。
